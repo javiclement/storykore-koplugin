@@ -5,6 +5,7 @@
 [![Devices](https://img.shields.io/badge/Devices-Kindle%20%7C%20Kobo%20%7C%20Android%20%7C%20PocketBook-emerald.svg)](#-supported-devices)
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 [![Public Beta](https://img.shields.io/badge/Status-Public%20Open%20Beta-orange.svg)](#-open-beta--your-feedback-matters)
+[![Support on Ko-fi](https://img.shields.io/badge/Support%20on-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/javivisan)
 
 > **A modern Goodreads & StoryGraph companion for KOReader.**  
 > Automatically sync reading progress, actual reading time, daily heatmaps, and book highlights from your Kindle or Kobo straight to the cloud in one tap over Wi-Fi.
@@ -154,6 +155,16 @@ StoryKore is currently in **Public Beta**. Your feedback as a KOReader user is e
 
 👉 **Open an Issue on GitHub:** [GitHub Issues](https://github.com/javiclement/storykore-koplugin/issues)  
 👉 **Or visit the web platform:** [https://storykore.pages.dev/](https://storykore.pages.dev/)
+
+---
+
+## ☕ Support StoryKore
+
+StoryKore is free, open-source, and built with passion for the digital reading community. If you find the plugin and platform helpful and want to help cover cloud servers, database hosting, and future updates:
+
+[![Support on Ko-fi](https://img.shields.io/badge/Support%20on-Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/javivisan)
+
+Every coffee directly supports server expenses and keeps StoryKore fast, open, and independent. Thank you! 📚☕
 
 ---
 
