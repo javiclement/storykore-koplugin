@@ -117,7 +117,7 @@ storykore.koplugin/
 3. Select the **StoryKore** menu:
    - Tap **Username:** and enter your StoryKore username or email.
    - Tap **Password:** and enter your password.
-   *(Note: The server URL defaults automatically to `https://storykore.onrender.com` — no need to type long URLs on your e-ink screen!)*
+   *(Note: The plugin connects directly to the StoryKore platform automatically — no need to type long URLs on your e-ink screen!)*
 4. Tap **Test connection**: KOReader will verify your credentials and confirm that everything is connected.
 
 ---
