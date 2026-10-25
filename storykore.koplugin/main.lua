@@ -1,7 +1,7 @@
 --[[--
     StoryKore KOReader Plugin
-    Compatible con todos los lectores (Kindle Keyboard / K3, K4, Paperwhite, Oasis, Kobo, Android, etc.)
-    Sincroniza de forma inalámbrica estadísticas (statistics.sqlite3) y metadatos (.lua dentro de .sdr) con StoryKore.
+    Compatible with Kindle (Keyboard / K3, K4, Paperwhite, Oasis, Basic), Kobo, Android, PocketBook, etc.
+    Wirelessly syncs reading stats (statistics.sqlite3) and book notes (.lua inside .sdr) with StoryKore.
 --]]--
 
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
@@ -191,9 +191,11 @@ local function read_text_file(filepath)
 end
 
 local DEFAULT_SERVER_URL = "https://storykore.onrender.com"
+local PLUGIN_VERSION = "1.1.1"
 
 local StoryKore = WidgetContainer:extend{
     name = "storykore",
+    version = PLUGIN_VERSION,
     is_doc_only = false,
 }
 
@@ -231,23 +233,23 @@ function StoryKore:saveSettings()
     end
 end
 
--- Registra StoryKore en el menú principal
+-- Register StoryKore in main menu
 function StoryKore:addToMainMenu(menu_items)
     menu_items.storykore = {
         text = _("StoryKore"),
         sub_item_table = {
             {
-                text = _("Sincronizar ahora"),
+                text = _("Sync now"),
                 callback = function()
                     self:onSyncTap()
                 end,
             },
             {
-                text = _("Auto Wi-Fi (Ahorro de batería)"),
+                text = _("Auto Wi-Fi (Battery Saver)"),
                 checked_func = function()
                     return self.settings.auto_manage_wifi == true
                 end,
-                help_text = _("Activa Wi-Fi para sincronizar y lo apaga automáticamente al terminar."),
+                help_text = _("Automatically enables Wi-Fi to sync and turns it off when done to save battery."),
                 callback = function(touchmenu_instance)
                     self.settings.auto_manage_wifi = not self.settings.auto_manage_wifi
                     self:saveSettings()
@@ -255,17 +257,17 @@ function StoryKore:addToMainMenu(menu_items)
                         touchmenu_instance:updateItems()
                     end
                     if self.settings.auto_manage_wifi then
-                        show_message(_("✓ Auto Wi-Fi activado:\n\nAl sincronizar, el plugin encenderá el Wi-Fi, sincronizará y lo apagará automáticamente para ahorrar batería."), 5)
+                        show_message(_("✓ Auto Wi-Fi enabled:\n\nWi-Fi will turn on automatically during sync and turn off immediately after to save battery."), 5)
                     else
-                        show_message(_("Auto Wi-Fi desactivado:\n\nEl Wi-Fi se gestionará de forma manual."), 3)
+                        show_message(_("Auto Wi-Fi disabled:\n\nWi-Fi will be managed manually."), 3)
                     end
                 end,
             },
             {
                 text_func = function()
                     local u = self.settings.username
-                    if not u or u == "" then return _("Usuario: (No configurado)") end
-                    return _("Usuario: ") .. u
+                    if not u or u == "" then return _("Username: (Not configured)") end
+                    return _("Username: ") .. u
                 end,
                 callback = function()
                     self:editUsername()
@@ -274,54 +276,60 @@ function StoryKore:addToMainMenu(menu_items)
             {
                 text_func = function()
                     local p = self.settings.password
-                    if not p or p == "" then return _("Contraseña: (No configurada)") end
-                    return _("Contraseña: ••••••••")
+                    if not p or p == "" then return _("Password: (Not configured)") end
+                    return _("Password: ••••••••")
                 end,
                 callback = function()
                     self:editPassword()
                 end,
             },
             {
-                text = _("Probar conexión"),
+                text = _("Test connection"),
                 callback = function()
                     self:testConnection()
                 end,
             },
             {
-                text = _("Estado de sincronización"),
+                text = _("Sync status & info"),
                 callback = function()
                     self:showStatusDialog()
                 end,
             },
             {
-                text = _("Configurar cuenta (Usuario / Clave)"),
+                text = _("Account settings (User / Password)"),
                 callback = function()
                     self:showSettingsDialog()
+                end,
+            },
+            {
+                text = _("Plugin Version: v") .. PLUGIN_VERSION,
+                callback = function()
+                    self:showStatusDialog()
                 end,
             },
         }
     }
 end
 
--- Modales de edición individual con teclado físico o virtual
+-- Dialogs with physical or virtual keyboard support
 function StoryKore:editServerUrl()
     if not InputDialog then return self:showSettingsDialog() end
     local dialog
     dialog = InputDialog:new{
-        title = _("URL del Servidor StoryKore"),
-        description = _("Ejemplo: https://mi-storykore.onrender.com o http://192.168.1.50:8000"),
+        title = _("StoryKore Server URL"),
+        description = _("Example: https://storykore.onrender.com or http://192.168.1.50:8000"),
         input = self.settings.server_url ~= "" and self.settings.server_url or "https://",
         buttons = {
             {
                 {
-                    text = _("Cancelar"),
+                    text = _("Cancel"),
                     id = "close",
                     callback = function()
                         UIManager:close(dialog)
                     end,
                 },
                 {
-                    text = _("Guardar"),
+                    text = _("Save"),
                     is_enter_default = true,
                     callback = function()
                         local val = (dialog:getInputText() or ""):gsub("%s+", ""):gsub("/+$", "")
@@ -329,7 +337,7 @@ function StoryKore:editServerUrl()
                         self.settings.token = ""
                         self:saveSettings()
                         UIManager:close(dialog)
-                        show_message(_("URL del servidor guardada."), 2)
+                        show_message(_("Server URL saved."), 2)
                     end,
                 },
             },
@@ -343,20 +351,20 @@ function StoryKore:editUsername()
     if not InputDialog then return self:showSettingsDialog() end
     local dialog
     dialog = InputDialog:new{
-        title = _("Usuario o Email"),
-        description = _("Tu usuario o correo de StoryKore:"),
+        title = _("Username or Email"),
+        description = _("Your StoryKore username or email:"),
         input = self.settings.username or "",
         buttons = {
             {
                 {
-                    text = _("Cancelar"),
+                    text = _("Cancel"),
                     id = "close",
                     callback = function()
                         UIManager:close(dialog)
                     end,
                 },
                 {
-                    text = _("Guardar"),
+                    text = _("Save"),
                     is_enter_default = true,
                     callback = function()
                         local val = (dialog:getInputText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -364,7 +372,7 @@ function StoryKore:editUsername()
                         self.settings.token = ""
                         self:saveSettings()
                         UIManager:close(dialog)
-                        show_message(_("Usuario guardado."), 2)
+                        show_message(_("Username saved."), 2)
                     end,
                 },
             },
@@ -378,21 +386,21 @@ function StoryKore:editPassword()
     if not InputDialog then return self:showSettingsDialog() end
     local dialog
     dialog = InputDialog:new{
-        title = _("Contraseña"),
-        description = _("Tu contraseña de StoryKore:"),
+        title = _("Password"),
+        description = _("Your StoryKore password:"),
         input = self.settings.password or "",
         text_type = "password",
         buttons = {
             {
                 {
-                    text = _("Cancelar"),
+                    text = _("Cancel"),
                     id = "close",
                     callback = function()
                         UIManager:close(dialog)
                     end,
                 },
                 {
-                    text = _("Guardar"),
+                    text = _("Save"),
                     is_enter_default = true,
                     callback = function()
                         local val = dialog:getInputText() or ""
@@ -400,7 +408,7 @@ function StoryKore:editPassword()
                         self.settings.token = ""
                         self:saveSettings()
                         UIManager:close(dialog)
-                        show_message(_("Contraseña guardada."), 2)
+                        show_message(_("Password saved."), 2)
                     end,
                 },
             },
@@ -416,31 +424,31 @@ function StoryKore:showSettingsDialog()
     end
     local dialog
     dialog = MultiInputDialog:new{
-        title = _("Cuenta de StoryKore"),
+        title = _("StoryKore Account"),
         fields = {
             {
-                description = _("Usuario o email:"),
+                description = _("Username or email:"),
                 text = self.settings.username or "",
-                hint = "usuario o email",
+                hint = "username or email",
             },
             {
-                description = _("Contraseña:"),
+                description = _("Password:"),
                 text = self.settings.password or "",
-                hint = "contraseña",
+                hint = "password",
                 text_type = "password",
             },
         },
         buttons = {
             {
                 {
-                    text = _("Cancelar"),
+                    text = _("Cancel"),
                     id = "close",
                     callback = function()
                         UIManager:close(dialog)
                     end,
                 },
                 {
-                    text = _("Guardar"),
+                    text = _("Save"),
                     is_enter_default = true,
                     callback = function()
                         local fields = dialog:getFieldsText()
@@ -454,7 +462,7 @@ function StoryKore:showSettingsDialog()
                         self:saveSettings()
 
                         UIManager:close(dialog)
-                        show_message(_("Cuenta guardada correctamente."), 3)
+                        show_message(_("Account saved successfully."), 3)
                     end,
                 },
             },
@@ -468,12 +476,12 @@ end
 function StoryKore:httpRequest(req)
     local ok_http, http = pcall(require, "socket.http")
     if not ok_http then
-        return nil, "Módulo socket.http no disponible en este dispositivo."
+        return nil, "Socket.http module is not available on this device."
     end
     local ok_https, https = pcall(require, "ssl.https")
     local ok_ltn12, ltn12 = pcall(require, "ltn12")
     if not ok_ltn12 then
-        return nil, "Módulo ltn12 no disponible."
+        return nil, "ltn12 module is not available."
     end
     local socketutil = safe_require("socketutil")
 
@@ -504,17 +512,14 @@ function StoryKore:httpRequest(req)
     end
 
     if not ok then
-        return nil, "Fallo al conectar: " .. tostring(res)
+        return nil, "Failed to connect: " .. tostring(res)
     end
 
-    -- En la interfaz de tabla de LuaSocket:
-    -- Si la petición tiene éxito a nivel de red: res == 1 y code contiene el código HTTP (ej: 200, 401, 500)
-    -- Si falla a nivel de socket/red: res es nil y code contiene el error (ej: "timeout", "closed", "wantread")
     if res ~= 1 then
         if code == "wantread" or code == "timeout" then
-            return nil, "El servidor tardó en responder (tiempo de espera agotado). Vuelve a intentar la sincronización ahora que el servidor está activo."
+            return nil, "Server response timed out. Please try syncing again now that the server is active."
         end
-        return nil, "Fallo de conexión: " .. tostring(code or res or "desconocido")
+        return nil, "Connection error: " .. tostring(code or res or "unknown")
     end
 
     local status_code = tonumber(code) or code
@@ -525,7 +530,7 @@ end
 function StoryKore:authenticate()
     if not self.settings.username or self.settings.username == "" or
        not self.settings.password or self.settings.password == "" then
-        return nil, _("Usuario o contraseña no configurados.")
+        return nil, _("Username or password not configured.")
     end
 
     local base_url = (self.settings.server_url or ""):gsub("/+$", "")
@@ -557,10 +562,10 @@ function StoryKore:authenticate()
             self:saveSettings()
             return data.access_token
         end
-        return nil, _("Respuesta inválida recibida del servidor.")
+        return nil, _("Invalid response received from server.")
     else
         local data = json_decode(body)
-        local detail = (data and data.detail) or (_("Error HTTP ") .. tostring(code))
+        local detail = (data and data.detail) or (_("HTTP Error ") .. tostring(code))
         return nil, detail
     end
 end
@@ -578,9 +583,9 @@ function StoryKore:testConnection()
        not self.settings.password or self.settings.password == "" then
         if ConfirmBox then
             UIManager:show(ConfirmBox:new{
-                text = _("Por favor, ingresa primero tu usuario y contraseña de StoryKore.\n\n¿Deseas configurarlos ahora?"),
-                ok_text = _("Configurar"),
-                cancel_text = _("Cancelar"),
+                text = _("Please enter your StoryKore username and password first.\n\nWould you like to configure them now?"),
+                ok_text = _("Configure"),
+                cancel_text = _("Cancel"),
                 ok_callback = function()
                     self:showSettingsDialog()
                 end,
@@ -595,7 +600,7 @@ function StoryKore:testConnection()
     local connecting_info = nil
     if auto_wifi and not is_wifi_on() then
         connecting_info = InfoMessage and InfoMessage:new{
-            text = _("StoryKore\n\n📶 Activando Wi-Fi...\nPor favor, espera."),
+            text = _("StoryKore\n\n📶 Turning on Wi-Fi...\nPlease wait."),
         }
         if connecting_info then UIManager:show(connecting_info) end
     end
@@ -607,7 +612,7 @@ function StoryKore:testConnection()
         end
 
         local info = InfoMessage and InfoMessage:new{
-            text = _("Conectando con StoryKore...\nComprobando autenticación..."),
+            text = _("Connecting to StoryKore...\nVerifying authentication..."),
         }
         if info then UIManager:show(info) end
 
@@ -618,23 +623,23 @@ function StoryKore:testConnection()
             local wifi_status_text = ""
             if auto_wifi then
                 turn_off_wifi()
-                wifi_status_text = _("\n\n📶 Wi-Fi desconectado automáticamente.")
+                wifi_status_text = _("\n\n📶 Wi-Fi disconnected automatically.")
             end
 
             if token then
-                show_message(_("✓ ¡Conexión con StoryKore exitosa!\n\nUsuario autenticado correctamente.") .. wifi_status_text, 5)
+                show_message(_("✓ StoryKore connection successful!\n\nAuthenticated as: ") .. self.settings.username .. wifi_status_text, 5)
             else
                 if ConfirmBox then
                     UIManager:show(ConfirmBox:new{
-                        text = _("No se pudo conectar con StoryKore:\n\n") .. (err or _("Error desconocido")) .. wifi_status_text .. _("\n\n¿Deseas revisar usuario y contraseña?"),
-                        ok_text = _("Revisar"),
-                        cancel_text = _("Cerrar"),
+                        text = _("Could not connect to StoryKore:\n\n") .. (err or _("Unknown error")) .. wifi_status_text .. _("\n\nWould you like to review your username and password?"),
+                        ok_text = _("Review"),
+                        cancel_text = _("Close"),
                         ok_callback = function()
                             self:showSettingsDialog()
                         end,
                     })
                 else
-                    show_message(_("Error de conexión:\n") .. (err or "") .. wifi_status_text, 6)
+                    show_message(_("Connection error:\n") .. (err or "") .. wifi_status_text, 6)
                 end
             end
         end)
@@ -759,7 +764,7 @@ function StoryKore:doSync()
     if not token or token == "" then
         local new_token, err = self:authenticate()
         if not new_token then
-            return nil, _("Error de inicio de sesión: ") .. (err or _("Verifica usuario y contraseña."))
+            return nil, _("Login error: ") .. (err or _("Please check username and password."))
         end
         token = new_token
     end
@@ -769,8 +774,8 @@ function StoryKore:doSync()
     local lua_files = self:scanLuaFiles(docs_dir)
 
     if not stats_b64 and #lua_files == 0 then
-        return nil, _("No se encontraron datos de KOReader para sincronizar.\n\n" ..
-                      "Ruta examinada: ") .. tostring(docs_dir) .. _("\nVerifica que tengas libros leídos o estadísticas.")
+        return nil, _("No KOReader reading data found to sync.\n\n" ..
+                      "Scanned directory: ") .. tostring(docs_dir) .. _("\nMake sure you have read books or recorded reading statistics.")
     end
 
     local payload = {
@@ -804,12 +809,12 @@ function StoryKore:doSync()
             token = new_token
             code, body = send_request(token)
         else
-            return nil, _("Tu sesión en StoryKore ha expirado. ") .. (auth_err or "")
+            return nil, _("Your StoryKore session has expired. ") .. (auth_err or "")
         end
     end
 
     if not code then
-        return nil, _("Fallo de red al conectar con StoryKore:\n") .. tostring(body)
+        return nil, _("Network failure connecting to StoryKore:\n") .. tostring(body)
     end
 
     if code == 200 then
@@ -817,11 +822,11 @@ function StoryKore:doSync()
         if data and data.success then
             return data
         else
-            return nil, _("El servidor respondió con éxito pero el formato de datos fue inesperado.")
+            return nil, _("The server responded with success but data format was unexpected.")
         end
     else
         local data = json_decode(body)
-        local err_detail = (data and data.detail) or (_("Error HTTP ") .. tostring(code))
+        local err_detail = (data and data.detail) or (_("HTTP Error ") .. tostring(code))
         return nil, err_detail
     end
 end
@@ -831,9 +836,9 @@ function StoryKore:onSyncTap()
        not self.settings.password or self.settings.password == "" then
         if ConfirmBox then
             UIManager:show(ConfirmBox:new{
-                text = _("Debes configurar primero tu cuenta de StoryKore (usuario y contraseña).\n\n¿Deseas configurarla ahora?"),
-                ok_text = _("Configurar"),
-                cancel_text = _("Cancelar"),
+                text = _("Please configure your StoryKore account first (username and password).\n\nWould you like to configure it now?"),
+                ok_text = _("Configure"),
+                cancel_text = _("Cancel"),
                 ok_callback = function()
                     self:showSettingsDialog()
                 end,
@@ -848,7 +853,7 @@ function StoryKore:onSyncTap()
     local connecting_info = nil
     if auto_wifi and not is_wifi_on() then
         connecting_info = InfoMessage and InfoMessage:new{
-            text = _("StoryKore Sync\n\n📶 Activando Wi-Fi automáticamente...\nConectando a la red, espera un momento."),
+            text = _("StoryKore Sync\n\n📶 Turning on Wi-Fi automatically...\nConnecting to network, please wait a moment."),
         }
         if connecting_info then UIManager:show(connecting_info) end
     end
@@ -860,7 +865,7 @@ function StoryKore:onSyncTap()
         end
 
         local info = InfoMessage and InfoMessage:new{
-            text = _("StoryKore Sync\n\nRecopilando estadísticas y notas de lectura...\nSubiendo datos a StoryKore..."),
+            text = _("StoryKore Sync\n\nCollecting reading statistics and notes...\nUploading data to StoryKore..."),
         }
         if info then UIManager:show(info) end
 
@@ -871,7 +876,7 @@ function StoryKore:onSyncTap()
             local wifi_status_text = ""
             if auto_wifi then
                 turn_off_wifi()
-                wifi_status_text = _("\n\n📶 Wi-Fi desconectado automáticamente para ahorrar batería.")
+                wifi_status_text = _("\n\n📶 Wi-Fi automatically disconnected to save battery.")
             end
 
             if result then
@@ -885,27 +890,27 @@ function StoryKore:onSyncTap()
                 self:saveSettings()
 
                 local msg = string.format(
-                    _("✓ Sincronización completada con éxito\n\n" ..
-                      "• Libros nuevos importados: %d\n" ..
-                      "• Libros actualizados: %d\n" ..
-                      "• Notas y subrayados: %d\n" ..
-                      "• Sesiones de lectura: %d\n\n" ..
-                      "Fecha: %s%s"),
-                    b_imp, b_upd, hl_imp, sess_imp, now_str, wifi_status_text
+                    _("✓ StoryKore Sync v%s completed successfully\n\n" ..
+                      "• New books imported: %d\n" ..
+                      "• Books updated: %d\n" ..
+                      "• Highlights & notes: %d\n" ..
+                      "• Reading sessions: %d\n\n" ..
+                      "Date: %s%s"),
+                    PLUGIN_VERSION, b_imp, b_upd, hl_imp, sess_imp, now_str, wifi_status_text
                 )
                 show_message(msg, 10)
             else
                 if ConfirmBox then
                     UIManager:show(ConfirmBox:new{
-                        text = _("Error en la sincronización con StoryKore:\n\n") .. (err_msg or _("Error desconocido")) .. wifi_status_text .. _("\n\n¿Deseas revisar tu usuario y contraseña?"),
-                        ok_text = _("Revisar"),
-                        cancel_text = _("Cerrar"),
+                        text = _("Error syncing with StoryKore:\n\n") .. (err_msg or _("Unknown error")) .. wifi_status_text .. _("\n\nWould you like to review your username and password?"),
+                        ok_text = _("Review"),
+                        cancel_text = _("Close"),
                         ok_callback = function()
                             self:showSettingsDialog()
                         end,
                     })
                 else
-                    show_message(_("Error de sincronización:\n") .. (err_msg or "") .. wifi_status_text, 8)
+                    show_message(_("Sync error:\n") .. (err_msg or "") .. wifi_status_text, 8)
                 end
             end
         end)
@@ -924,20 +929,22 @@ function StoryKore:showStatusDialog()
     local lua_count = #self:scanLuaFiles(docs_dir)
 
     local text = string.format(
-        _("Estado de StoryKore Sync:\n\n" ..
-          "• Servidor: StoryKore Cloud\n" ..
-          "• Usuario: %s\n" ..
+        _("StoryKore Sync Status:\n\n" ..
+          "• Plugin Version: v%s\n" ..
+          "• Server: StoryKore Cloud\n" ..
+          "• Username: %s\n" ..
           "• Auto Wi-Fi: %s\n" ..
-          "• Base de estadísticas: %s\n" ..
-          "• Metadatos .lua encontrados: %d\n" ..
-          "• Carpeta de biblioteca: %s\n" ..
-          "• Última sincronización: %s"),
-        self.settings.username ~= "" and self.settings.username or _("(No configurado)"),
-        self.settings.auto_manage_wifi and _("Activado (Conectar -> Sincronizar -> Apagar)") or _("Desactivado (Manual)"),
-        has_stats and _("Detectada (statistics.sqlite3)") or _("No encontrada"),
+          "• Statistics Database: %s\n" ..
+          "• Book metadata (.lua): %d found\n" ..
+          "• Books directory: %s\n" ..
+          "• Last sync: %s"),
+        PLUGIN_VERSION,
+        self.settings.username ~= "" and self.settings.username or _("(Not configured)"),
+        self.settings.auto_manage_wifi and _("Enabled (Connect -> Sync -> Disconnect)") or _("Disabled (Manual)"),
+        has_stats and _("Detected (statistics.sqlite3)") or _("Not found"),
         lua_count,
         docs_dir,
-        self.settings.last_sync ~= "" and self.settings.last_sync or _("Nunca")
+        self.settings.last_sync ~= "" and self.settings.last_sync or _("Never")
     )
     show_message(text, 10)
 end
