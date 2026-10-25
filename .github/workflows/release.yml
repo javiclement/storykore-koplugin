@@ -1,0 +1,31 @@
+name: Release Plugin
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Package KOReader Plugin (.zip)
+        run: |
+          zip -r storykore.koplugin.zip storykore.koplugin/ -x "*.DS_Store" "*__pycache__*"
+
+      - name: Create GitHub Release and Upload Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: storykore.koplugin.zip
+          name: StoryKore KOReader Plugin ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false

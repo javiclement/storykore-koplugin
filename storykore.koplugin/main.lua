@@ -39,6 +39,60 @@ local function show_message(text, timeout)
     end
 end
 
+-- Wi-Fi and Network helper functions
+local function is_wifi_on()
+    if NetworkMgr and NetworkMgr.isWifiOn then
+        local ok, val = pcall(function() return NetworkMgr:isWifiOn() end)
+        if ok and val ~= nil then return val end
+    end
+    if Device and Device.isWifiOn then
+        local ok, val = pcall(function() return Device:isWifiOn() end)
+        if ok and val ~= nil then return val end
+    end
+    return false
+end
+
+local function turn_off_wifi()
+    if NetworkMgr and NetworkMgr.turnOffWifi then
+        pcall(function() NetworkMgr:turnOffWifi() end)
+    elseif Device and Device.turnOffWifi then
+        pcall(function() Device:turnOffWifi() end)
+    end
+end
+
+local function turn_on_wifi_and_run(callback)
+    if is_wifi_on() then
+        if NetworkMgr and NetworkMgr.runWhenOnline then
+            NetworkMgr:runWhenOnline(callback)
+        else
+            callback()
+        end
+        return
+    end
+
+    local function when_online()
+        if NetworkMgr and NetworkMgr.runWhenOnline then
+            NetworkMgr:runWhenOnline(callback)
+        else
+            callback()
+        end
+    end
+
+    if NetworkMgr and NetworkMgr.turnOnWifi then
+        local ok = pcall(function()
+            NetworkMgr:turnOnWifi(when_online, false)
+        end)
+        if not ok then
+            when_online()
+        end
+    elseif Device and Device.turnOnWifi then
+        pcall(function() Device:turnOnWifi() end)
+        when_online()
+    else
+        when_online()
+    end
+end
+
 -- Base64 encoder helper with fast C module detection and high-performance pure-Lua fallback
 local function to_base64(data)
     if not data or #data == 0 then return "" end
@@ -166,6 +220,9 @@ function StoryKore:loadSettings()
     self.settings.token = self.settings.token or ""
     self.settings.last_sync = self.settings.last_sync or ""
     self.settings.custom_docs_dir = self.settings.custom_docs_dir or ""
+    if self.settings.auto_manage_wifi == nil then
+        self.settings.auto_manage_wifi = false
+    end
 end
 
 function StoryKore:saveSettings()
@@ -183,6 +240,25 @@ function StoryKore:addToMainMenu(menu_items)
                 text = _("Sincronizar ahora"),
                 callback = function()
                     self:onSyncTap()
+                end,
+            },
+            {
+                text = _("Auto Wi-Fi (Ahorro de batería)"),
+                checked_func = function()
+                    return self.settings.auto_manage_wifi == true
+                end,
+                help_text = _("Activa Wi-Fi para sincronizar y lo apaga automáticamente al terminar."),
+                callback = function(touchmenu_instance)
+                    self.settings.auto_manage_wifi = not self.settings.auto_manage_wifi
+                    self:saveSettings()
+                    if touchmenu_instance and touchmenu_instance.updateItems then
+                        touchmenu_instance:updateItems()
+                    end
+                    if self.settings.auto_manage_wifi then
+                        show_message(_("✓ Auto Wi-Fi activado:\n\nAl sincronizar, el plugin encenderá el Wi-Fi, sincronizará y lo apagará automáticamente para ahorrar batería."), 5)
+                    else
+                        show_message(_("Auto Wi-Fi desactivado:\n\nEl Wi-Fi se gestionará de forma manual."), 3)
+                    end
                 end,
             },
             {
@@ -515,7 +591,21 @@ function StoryKore:testConnection()
         return
     end
 
-    self:runOnline(function()
+    local auto_wifi = self.settings.auto_manage_wifi == true
+    local connecting_info = nil
+    if auto_wifi and not is_wifi_on() then
+        connecting_info = InfoMessage and InfoMessage:new{
+            text = _("StoryKore\n\n📶 Activando Wi-Fi...\nPor favor, espera."),
+        }
+        if connecting_info then UIManager:show(connecting_info) end
+    end
+
+    local function run_test()
+        if connecting_info then
+            UIManager:close(connecting_info)
+            connecting_info = nil
+        end
+
         local info = InfoMessage and InfoMessage:new{
             text = _("Conectando con StoryKore...\nComprobando autenticación..."),
         }
@@ -525,12 +615,18 @@ function StoryKore:testConnection()
             local token, err = self:authenticate()
             if info then UIManager:close(info) end
 
+            local wifi_status_text = ""
+            if auto_wifi then
+                turn_off_wifi()
+                wifi_status_text = _("\n\n📶 Wi-Fi desconectado automáticamente.")
+            end
+
             if token then
-                show_message(_("✓ ¡Conexión con StoryKore exitosa!\n\nUsuario autenticado correctamente."), 5)
+                show_message(_("✓ ¡Conexión con StoryKore exitosa!\n\nUsuario autenticado correctamente.") .. wifi_status_text, 5)
             else
                 if ConfirmBox then
                     UIManager:show(ConfirmBox:new{
-                        text = _("No se pudo conectar con StoryKore:\n\n") .. (err or _("Error desconocido")) .. _("\n\n¿Deseas revisar usuario y contraseña?"),
+                        text = _("No se pudo conectar con StoryKore:\n\n") .. (err or _("Error desconocido")) .. wifi_status_text .. _("\n\n¿Deseas revisar usuario y contraseña?"),
                         ok_text = _("Revisar"),
                         cancel_text = _("Cerrar"),
                         ok_callback = function()
@@ -538,11 +634,17 @@ function StoryKore:testConnection()
                         end,
                     })
                 else
-                    show_message(_("Error de conexión:\n") .. (err or ""), 6)
+                    show_message(_("Error de conexión:\n") .. (err or "") .. wifi_status_text, 6)
                 end
             end
         end)
-    end)
+    end
+
+    if auto_wifi then
+        turn_on_wifi_and_run(run_test)
+    else
+        self:runOnline(run_test)
+    end
 end
 
 function StoryKore:getDocumentsDir()
@@ -742,15 +844,35 @@ function StoryKore:onSyncTap()
         return
     end
 
-    self:runOnline(function()
+    local auto_wifi = self.settings.auto_manage_wifi == true
+    local connecting_info = nil
+    if auto_wifi and not is_wifi_on() then
+        connecting_info = InfoMessage and InfoMessage:new{
+            text = _("StoryKore Sync\n\n📶 Activando Wi-Fi automáticamente...\nConectando a la red, espera un momento."),
+        }
+        if connecting_info then UIManager:show(connecting_info) end
+    end
+
+    local function run_sync()
+        if connecting_info then
+            UIManager:close(connecting_info)
+            connecting_info = nil
+        end
+
         local info = InfoMessage and InfoMessage:new{
-            text = _("StoryKore Sync\n\nRecopilando estadísticas y notas de lectura...\nPor favor, espera."),
+            text = _("StoryKore Sync\n\nRecopilando estadísticas y notas de lectura...\nSubiendo datos a StoryKore..."),
         }
         if info then UIManager:show(info) end
 
         UIManager:nextTick(function()
             local result, err_msg = self:doSync()
             if info then UIManager:close(info) end
+
+            local wifi_status_text = ""
+            if auto_wifi then
+                turn_off_wifi()
+                wifi_status_text = _("\n\n📶 Wi-Fi desconectado automáticamente para ahorrar batería.")
+            end
 
             if result then
                 local b_imp = result.books_imported or 0
@@ -768,14 +890,14 @@ function StoryKore:onSyncTap()
                       "• Libros actualizados: %d\n" ..
                       "• Notas y subrayados: %d\n" ..
                       "• Sesiones de lectura: %d\n\n" ..
-                      "Fecha: %s"),
-                    b_imp, b_upd, hl_imp, sess_imp, now_str
+                      "Fecha: %s%s"),
+                    b_imp, b_upd, hl_imp, sess_imp, now_str, wifi_status_text
                 )
                 show_message(msg, 10)
             else
                 if ConfirmBox then
                     UIManager:show(ConfirmBox:new{
-                        text = _("Error en la sincronización con StoryKore:\n\n") .. (err_msg or _("Error desconocido")) .. _("\n\n¿Deseas revisar tu usuario y contraseña?"),
+                        text = _("Error en la sincronización con StoryKore:\n\n") .. (err_msg or _("Error desconocido")) .. wifi_status_text .. _("\n\n¿Deseas revisar tu usuario y contraseña?"),
                         ok_text = _("Revisar"),
                         cancel_text = _("Cerrar"),
                         ok_callback = function()
@@ -783,11 +905,17 @@ function StoryKore:onSyncTap()
                         end,
                     })
                 else
-                    show_message(_("Error de sincronización:\n") .. (err_msg or ""), 8)
+                    show_message(_("Error de sincronización:\n") .. (err_msg or "") .. wifi_status_text, 8)
                 end
             end
         end)
-    end)
+    end
+
+    if auto_wifi then
+        turn_on_wifi_and_run(run_sync)
+    else
+        self:runOnline(run_sync)
+    end
 end
 
 function StoryKore:showStatusDialog()
@@ -799,11 +927,13 @@ function StoryKore:showStatusDialog()
         _("Estado de StoryKore Sync:\n\n" ..
           "• Servidor: StoryKore Cloud\n" ..
           "• Usuario: %s\n" ..
+          "• Auto Wi-Fi: %s\n" ..
           "• Base de estadísticas: %s\n" ..
           "• Metadatos .lua encontrados: %d\n" ..
           "• Carpeta de biblioteca: %s\n" ..
           "• Última sincronización: %s"),
         self.settings.username ~= "" and self.settings.username or _("(No configurado)"),
+        self.settings.auto_manage_wifi and _("Activado (Conectar -> Sincronizar -> Apagar)") or _("Desactivado (Manual)"),
         has_stats and _("Detectada (statistics.sqlite3)") or _("No encontrada"),
         lua_count,
         docs_dir,

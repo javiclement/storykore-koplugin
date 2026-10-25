@@ -116,24 +116,28 @@ storykore.koplugin/
 1. In KOReader, tap the top of the screen to open the main menu.
 2. Tap the **Tools** icon (cogwheel / wrench).
 3. Select the **StoryKore** menu:
-   - Tap **Username:** and enter your StoryKore username or email.
-   - Tap **Password:** and enter your password.
-   *(Note: The plugin connects directly to the StoryKore platform automatically — no need to type long URLs on your e-ink screen!)*
-4. Tap **Test connection**: KOReader will verify your credentials and confirm that everything is connected.
+   - Tap **Usuario:** and enter your StoryKore username or email.
+   - Tap **Contraseña:** and enter your password.
+   - *(Optional & Highly Recommended)* Enable **Auto Wi-Fi (Ahorro de batería)**: When checked, StoryKore will turn on your e-reader's Wi-Fi automatically, synchronize all your books, and immediately turn Wi-Fi back off to preserve battery life!
+4. Tap **Probar conexión**: KOReader will verify your credentials and confirm that everything is connected.
 
 ---
 
 ## 🔄 How to Sync Your Reading
 
+### Option A: Clean 1-Tap Workflow (Auto Wi-Fi Enabled)
+1. Tap **StoryKore** > **Sincronizar ahora**.
+2. That's it! StoryKore powers on Wi-Fi, uploads all your reading sessions and highlights, and powers off Wi-Fi immediately. You never need to fiddle with Wi-Fi settings again.
+
+### Option B: Manual Wi-Fi
 1. Ensure **Wi-Fi is turned on** on your e-reader.
-2. Open the menu > **Tools** > **StoryKore** > **Sync now**.
-3. The plugin will collect your reading sessions and notes and upload them securely.
-4. Within seconds, a summary pop-up will display:
+2. Open menu > **StoryKore** > **Sincronizar ahora**.
+3. Within seconds, a summary pop-up will display:
    - New books discovered.
    - Books updated with new progress % and pages.
    - Highlights and notes synchronized.
    - Computed reading sessions.
-5. Open [**https://storykore.pages.dev/**](https://storykore.pages.dev/) on your phone, tablet, or desktop to see your updated dashboard!
+4. Open [**https://storykore.pages.dev/**](https://storykore.pages.dev/) on your phone, tablet, or desktop to see your updated dashboard!
 
 ---
 
