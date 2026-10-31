@@ -23,7 +23,7 @@
 ## 📸 How StoryKore Works
 
 ### 1. Create an Account in 10 Seconds
-Head to [storykore.pages.dev](https://storykore.pages.dev/) and switch to the **Register** tab. Enter a username, email, and password to start syncing your books immediately.
+Head to [storykore.pages.dev](https://storykore.pages.dev/) and switch to the **Register** tab. Choose a username and password to start syncing your books immediately—no email, verification codes, or personal data required!
 
 ![StoryKore Welcome & Registration](screenshots/01_landing_en.png)
 ![StoryKore Create Account](screenshots/02_register_en.png)
@@ -139,6 +139,15 @@ storykore.koplugin/
    - Highlights and notes synchronized.
    - Computed reading sessions.
 4. Open [**https://storykore.pages.dev/**](https://storykore.pages.dev/) on your phone, tablet, or desktop to see your updated dashboard!
+
+---
+
+### 🎥 Watch 1-Tap Sync in Action
+See how effortless it is to sync your reading progress and statistics from your e-reader directly to the cloud:
+
+https://github.com/javiclement/storykore-koplugin/raw/main/screenshots/pxl-20261027-202243934_IxPNnlEv.mp4
+
+<video src="screenshots/pxl-20261027-202243934_IxPNnlEv.mp4" controls="controls" muted="muted" style="max-width: 100%; border-radius: 12px;"></video>
 
 ---
 
