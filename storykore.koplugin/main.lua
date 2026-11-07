@@ -191,7 +191,7 @@ local function read_text_file(filepath)
 end
 
 local DEFAULT_SERVER_URL = "https://storykore.pages.dev"
-local PLUGIN_VERSION = "1.4.0"
+local PLUGIN_VERSION = "1.5.0"
 local GITHUB_API_LATEST = "https://api.github.com/repos/javiclement/storykore-koplugin/releases/latest"
 local GITHUB_RAW_MAIN = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/main.lua"
 local GITHUB_RAW_META = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/_meta.lua"
@@ -1050,6 +1050,74 @@ function StoryKore:scanLuaFiles(base_dir, min_mtime)
     return lua_files
 end
 
+function StoryKore:extractSessions(stats_path, min_time)
+    local sessions = {}
+    if not stats_path then return sessions end
+
+    local ok_sq3, SQ3 = pcall(require, "lua-ljsqlite3/init")
+    if not ok_sq3 or not SQ3 then
+        ok_sq3, SQ3 = pcall(require, "ljsqlite3")
+    end
+    if not ok_sq3 or not SQ3 then return sessions end
+
+    local ok_db, db = pcall(function() return SQ3.open(stats_path) end)
+    if not ok_db or not db then return sessions end
+
+    pcall(function()
+        local dur_col = "duration"
+        pcall(function()
+            local info = db:exec("PRAGMA table_info(page_stat)")
+            if info and info.name then
+                for _, col_name in ipairs(info.name) do
+                    if col_name == "period" then
+                        dur_col = "period"
+                        break
+                    end
+                end
+            end
+        end)
+
+        local sql = string.format([[
+            SELECT b.title, b.authors, ps.page, ps.start_time, ps.%s AS dur
+            FROM page_stat ps
+            JOIN book b ON b.id = ps.id_book
+            WHERE ps.%s > 0 AND ps.%s < 18000
+        ]], dur_col, dur_col, dur_col)
+
+        if min_time and min_time > 0 then
+            sql = sql .. " AND ps.start_time >= " .. tostring(min_time)
+        end
+        sql = sql .. " ORDER BY ps.start_time ASC"
+
+        local res = db:exec(sql)
+        if res and res.title then
+            local n = #res.title
+            for i = 1, n do
+                local st = tonumber(res.start_time[i]) or 0
+                local dur = tonumber(res.dur[i]) or 0
+                local pg = tonumber(res.page[i]) or 1
+                local title = tostring(res.title[i] or "")
+                local authors = tostring(res.authors and res.authors[i] or "")
+                local date_str = ""
+                if st > 0 then
+                    pcall(function() date_str = os.date("%Y-%m-%d", st) end)
+                end
+                table.insert(sessions, {
+                    book_title = title,
+                    book_authors = authors,
+                    page = pg,
+                    start_time = st,
+                    duration = dur,
+                    date_str = date_str,
+                })
+            end
+        end
+    end)
+
+    pcall(function() db:close() end)
+    return sessions
+end
+
 function StoryKore:doSync(force_full)
     local token = self.settings.token
     if not token or token == "" then
@@ -1070,8 +1138,9 @@ function StoryKore:doSync(force_full)
     end
 
     local lua_files = self:scanLuaFiles(docs_dir, min_mtime)
+    local sessions = self:extractSessions(stats_path, force_full and nil or min_mtime)
 
-    if not stats_b64 and #lua_files == 0 then
+    if not stats_b64 and #lua_files == 0 and #sessions == 0 then
         return nil, _("No KOReader reading data found to sync.\n\n" ..
                       "Scanned directory: ") .. tostring(docs_dir) .. _("\nMake sure you have read books or recorded reading statistics.")
     end
@@ -1079,6 +1148,7 @@ function StoryKore:doSync(force_full)
     local payload = {
         statistics_db = stats_b64,
         lua_files = lua_files,
+        sessions = sessions,
         auto_enrich = true,
     }
     local payload_json = json_encode(payload)
