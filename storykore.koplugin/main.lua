@@ -190,8 +190,8 @@ local function read_text_file(filepath)
     return content
 end
 
-local DEFAULT_SERVER_URL = "https://storykore.onrender.com"
-local PLUGIN_VERSION = "1.1.1"
+local DEFAULT_SERVER_URL = "https://storykore.pages.dev"
+local PLUGIN_VERSION = "1.3.0"
 
 local StoryKore = WidgetContainer:extend{
     name = "storykore",
@@ -214,13 +214,16 @@ function StoryKore:loadSettings()
         self.settings = {}
     end
     local s_url = self.settings.server_url
-    if not s_url or s_url == "" or s_url == "https://" or s_url == "http://" then
+    if not s_url or s_url == "" or s_url == "https://" or s_url == "http://" or (type(s_url) == "string" and s_url:find("onrender.com")) then
         self.settings.server_url = DEFAULT_SERVER_URL
+        self.settings.token = "" -- Force fresh authentication on Cloudflare
+        self:saveSettings()
     end
     self.settings.username = self.settings.username or ""
     self.settings.password = self.settings.password or ""
     self.settings.token = self.settings.token or ""
     self.settings.last_sync = self.settings.last_sync or ""
+    self.settings.last_sync_timestamp = self.settings.last_sync_timestamp or 0
     self.settings.custom_docs_dir = self.settings.custom_docs_dir or ""
     if self.settings.auto_manage_wifi == nil then
         self.settings.auto_manage_wifi = false
@@ -239,9 +242,17 @@ function StoryKore:addToMainMenu(menu_items)
         text = _("StoryKore"),
         sub_item_table = {
             {
-                text = _("Sync now"),
+                text = _("Sync now (Incremental)"),
+                help_text = _("Fast sync: uploads only books and notes modified since your last sync."),
                 callback = function()
-                    self:onSyncTap()
+                    self:onSyncTap(false)
+                end,
+            },
+            {
+                text = _("Force full sync"),
+                help_text = _("Full sync: rescans and uploads your entire library from scratch."),
+                callback = function()
+                    self:onSyncTap(true)
                 end,
             },
             {
@@ -284,6 +295,16 @@ function StoryKore:addToMainMenu(menu_items)
                 end,
             },
             {
+                text_func = function()
+                    local url = self.settings.server_url
+                    if not url or url == "" then return _("Server: ") .. DEFAULT_SERVER_URL end
+                    return _("Server: ") .. url
+                end,
+                callback = function()
+                    self:editServerUrl()
+                end,
+            },
+            {
                 text = _("Test connection"),
                 callback = function()
                     self:testConnection()
@@ -317,10 +338,20 @@ function StoryKore:editServerUrl()
     local dialog
     dialog = InputDialog:new{
         title = _("StoryKore Server URL"),
-        description = _("Example: https://storykore.onrender.com or http://192.168.1.50:8000"),
-        input = self.settings.server_url ~= "" and self.settings.server_url or "https://",
+        description = _("URL de StoryKore en Cloudflare (Pages):"),
+        input = (self.settings.server_url and self.settings.server_url ~= "") and self.settings.server_url or DEFAULT_SERVER_URL,
         buttons = {
             {
+                {
+                    text = _("Cloudflare"),
+                    callback = function()
+                        self.settings.server_url = DEFAULT_SERVER_URL
+                        self.settings.token = ""
+                        self:saveSettings()
+                        UIManager:close(dialog)
+                        show_message(_("✓ URL restaurada a Cloudflare:\n") .. DEFAULT_SERVER_URL, 3)
+                    end,
+                },
                 {
                     text = _("Cancel"),
                     id = "close",
@@ -333,11 +364,14 @@ function StoryKore:editServerUrl()
                     is_enter_default = true,
                     callback = function()
                         local val = (dialog:getInputText() or ""):gsub("%s+", ""):gsub("/+$", "")
+                        if val == "" or val:find("onrender") then
+                            val = DEFAULT_SERVER_URL
+                        end
                         self.settings.server_url = val
                         self.settings.token = ""
                         self:saveSettings()
                         UIManager:close(dialog)
-                        show_message(_("Server URL saved."), 2)
+                        show_message(_("URL del servidor guardada:\n") .. val, 2)
                     end,
                 },
             },
@@ -670,9 +704,14 @@ function StoryKore:getDocumentsDir()
 
     local data_dir = DataStorage and DataStorage:getDataDir() or ""
     local candidates = {
+        "/sdcard/Books",
+        "/sdcard/books",
+        "/storage/emulated/0/Books",
+        "/storage/emulated/0/books",
+        "/sdcard/Download",
+        "/sdcard/Documents",
         "/mnt/us/documents",
         "/mnt/onboard",
-        "/sdcard/books",
         "/sdcard/koreader",
         data_dir .. "/../documents",
         data_dir,
@@ -711,7 +750,7 @@ function StoryKore:getStatisticsDb()
     return nil, nil
 end
 
-function StoryKore:scanLuaFiles(base_dir)
+function StoryKore:scanLuaFiles(base_dir, min_mtime)
     local lua_files = {}
     if not lfs then return lua_files end
     local seen = {}
@@ -723,7 +762,9 @@ function StoryKore:scanLuaFiles(base_dir)
 
         for entry in lfs.dir(dir) do
             if entry ~= "." and entry ~= ".." and not entry:match("^%..+") and
-               entry ~= "System Volume Information" and entry ~= "$RECYCLE.BIN" then
+               entry ~= "System Volume Information" and entry ~= "$RECYCLE.BIN" and
+               entry ~= "Android" and entry ~= "DCIM" and entry ~= "Pictures" and
+               entry ~= "Music" and entry ~= "Movies" then
                 local full_path = dir .. "/" .. entry
                 local attr = lfs.attributes(full_path)
                 if attr and attr.mode == "directory" then
@@ -733,16 +774,21 @@ function StoryKore:scanLuaFiles(base_dir)
                                 local lua_path = full_path .. "/" .. sdr_item
                                 if not seen[lua_path] then
                                     seen[lua_path] = true
-                                    local content = read_text_file(lua_path)
-                                    if content and #content > 0 then
-                                        local rel_path = lua_path
-                                        if lua_path:sub(1, #base_dir) == base_dir then
-                                            rel_path = lua_path:sub(#base_dir + 1):gsub("^/+", "")
+                                    local lua_attr = lfs.attributes(lua_path)
+                                    local mtime = lua_attr and lua_attr.modification or 0
+                                    -- Incremental check: only include if modified after min_mtime
+                                    if not min_mtime or min_mtime <= 0 or mtime >= min_mtime then
+                                        local content = read_text_file(lua_path)
+                                        if content and #content > 0 then
+                                            local rel_path = lua_path
+                                            if lua_path:sub(1, #base_dir) == base_dir then
+                                                rel_path = lua_path:sub(#base_dir + 1):gsub("^/+", "")
+                                            end
+                                            table.insert(lua_files, {
+                                                path = rel_path,
+                                                content = content,
+                                            })
                                         end
-                                        table.insert(lua_files, {
-                                            path = rel_path,
-                                            content = content,
-                                        })
                                     end
                                 end
                             end
@@ -759,7 +805,7 @@ function StoryKore:scanLuaFiles(base_dir)
     return lua_files
 end
 
-function StoryKore:doSync()
+function StoryKore:doSync(force_full)
     local token = self.settings.token
     if not token or token == "" then
         local new_token, err = self:authenticate()
@@ -771,7 +817,14 @@ function StoryKore:doSync()
 
     local stats_b64, stats_path = self:getStatisticsDb()
     local docs_dir = self:getDocumentsDir()
-    local lua_files = self:scanLuaFiles(docs_dir)
+
+    local min_mtime = nil
+    if not force_full and self.settings.last_sync_timestamp and self.settings.last_sync_timestamp > 0 then
+        -- 5 minutes safety buffer for clock differences
+        min_mtime = math.max(0, self.settings.last_sync_timestamp - 300)
+    end
+
+    local lua_files = self:scanLuaFiles(docs_dir, min_mtime)
 
     if not stats_b64 and #lua_files == 0 then
         return nil, _("No KOReader reading data found to sync.\n\n" ..
@@ -820,6 +873,9 @@ function StoryKore:doSync()
     if code == 200 then
         local data = json_decode(body)
         if data and data.success then
+            self.settings.last_sync_timestamp = os.time()
+            self.settings.last_sync = os.date("%Y-%m-%d %H:%M:%S")
+            self:saveSettings()
             return data
         else
             return nil, _("The server responded with success but data format was unexpected.")
@@ -831,7 +887,7 @@ function StoryKore:doSync()
     end
 end
 
-function StoryKore:onSyncTap()
+function StoryKore:onSyncTap(force_full)
     if not self.settings.username or self.settings.username == "" or
        not self.settings.password or self.settings.password == "" then
         if ConfirmBox then
@@ -864,13 +920,14 @@ function StoryKore:onSyncTap()
             connecting_info = nil
         end
 
+        local sync_mode_str = force_full and _("Full Library Sync") or _("Incremental Sync")
         local info = InfoMessage and InfoMessage:new{
-            text = _("StoryKore Sync\n\nCollecting reading statistics and notes...\nUploading data to StoryKore..."),
+            text = _("StoryKore Sync (") .. sync_mode_str .. _(")\n\nCollecting reading statistics and notes...\nUploading data to StoryKore..."),
         }
         if info then UIManager:show(info) end
 
         UIManager:nextTick(function()
-            local result, err_msg = self:doSync()
+            local result, err_msg = self:doSync(force_full)
             if info then UIManager:close(info) end
 
             local wifi_status_text = ""
@@ -886,17 +943,16 @@ function StoryKore:onSyncTap()
                 local sess_imp = result.sessions_imported or 0
 
                 local now_str = os.date("%Y-%m-%d %H:%M:%S")
-                self.settings.last_sync = now_str
-                self:saveSettings()
+                local mode_tag = force_full and _("Full") or _("Incremental")
 
                 local msg = string.format(
-                    _("✓ StoryKore Sync v%s completed successfully\n\n" ..
+                    _("✓ StoryKore Sync v%s (%s) completed successfully\n\n" ..
                       "• New books imported: %d\n" ..
                       "• Books updated: %d\n" ..
                       "• Highlights & notes: %d\n" ..
                       "• Reading sessions: %d\n\n" ..
                       "Date: %s%s"),
-                    PLUGIN_VERSION, b_imp, b_upd, hl_imp, sess_imp, now_str, wifi_status_text
+                    PLUGIN_VERSION, mode_tag, b_imp, b_upd, hl_imp, sess_imp, now_str, wifi_status_text
                 )
                 show_message(msg, 10)
             else
@@ -931,7 +987,7 @@ function StoryKore:showStatusDialog()
     local text = string.format(
         _("StoryKore Sync Status:\n\n" ..
           "• Plugin Version: v%s\n" ..
-          "• Server: StoryKore Cloud\n" ..
+          "• Server: %s\n" ..
           "• Username: %s\n" ..
           "• Auto Wi-Fi: %s\n" ..
           "• Statistics Database: %s\n" ..
@@ -939,6 +995,7 @@ function StoryKore:showStatusDialog()
           "• Books directory: %s\n" ..
           "• Last sync: %s"),
         PLUGIN_VERSION,
+        (self.settings.server_url and self.settings.server_url ~= "") and self.settings.server_url or DEFAULT_SERVER_URL,
         self.settings.username ~= "" and self.settings.username or _("(Not configured)"),
         self.settings.auto_manage_wifi and _("Enabled (Connect -> Sync -> Disconnect)") or _("Disabled (Manual)"),
         has_stats and _("Detected (statistics.sqlite3)") or _("Not found"),

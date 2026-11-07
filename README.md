@@ -120,7 +120,8 @@ storykore.koplugin/
    - Tap **Password:** and enter your password.
    - *(Optional & Highly Recommended)* Enable **Auto Wi-Fi (Battery Saver)**: When checked, StoryKore will turn on your e-reader's Wi-Fi automatically, synchronize all your books, and immediately turn Wi-Fi back off to preserve battery life!
 4. Tap **Test connection**: KOReader will verify your credentials and confirm that everything is connected.
-5. You can also view the installed version directly in the menu item: **Plugin Version: v1.1.1**.
+5. You can also view the installed version directly in the menu item: **Plugin Version: v1.3.0**.
+6. You can configure or restore the **StoryKore Server URL** (defaults to `https://storykore.pages.dev`).
 
 ---
 
