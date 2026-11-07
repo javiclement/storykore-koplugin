@@ -191,7 +191,7 @@ local function read_text_file(filepath)
 end
 
 local DEFAULT_SERVER_URL = "https://storykore.pages.dev"
-local PLUGIN_VERSION = "1.5.0"
+local PLUGIN_VERSION = "1.5.1"
 local GITHUB_API_LATEST = "https://api.github.com/repos/javiclement/storykore-koplugin/releases/latest"
 local GITHUB_RAW_MAIN = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/main.lua"
 local GITHUB_RAW_META = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/_meta.lua"
@@ -881,6 +881,21 @@ function StoryKore:checkAndAutoUpdate()
                         return
                     end
 
+                    -- Hot-reload module in memory so methods take effect immediately
+                    pcall(function()
+                        local chunk = loadfile(plugin_dir .. "main.lua")
+                        if chunk then
+                            local mod = chunk()
+                            if mod and type(mod) == "table" then
+                                for k, v in pairs(mod) do
+                                    if type(v) == "function" then
+                                        StoryKore[k] = v
+                                    end
+                                end
+                            end
+                        end
+                    end)
+
                     -- Update successful!
                     local success_text = string.format(
                         _("✓ StoryKore updated to v%s successfully!\n\n" ..
@@ -1064,53 +1079,99 @@ function StoryKore:extractSessions(stats_path, min_time)
     if not ok_db or not db then return sessions end
 
     pcall(function()
-        local dur_col = "duration"
-        pcall(function()
-            local info = db:exec("PRAGMA table_info(page_stat)")
-            if info and info.name then
-                for _, col_name in ipairs(info.name) do
-                    if col_name == "period" then
-                        dur_col = "period"
+        local table_names = { "page_stat", "page_stat_data" }
+        local dur_cols = { "period", "duration" }
+        local found = false
+
+        for _, tbl in ipairs(table_names) do
+            for _, dur in ipairs(dur_cols) do
+                local sql = string.format([[
+                    SELECT b.title, b.authors, ps.page, ps.start_time, ps.%s
+                    FROM %s ps
+                    JOIN book b ON b.id = ps.id_book
+                    WHERE ps.%s > 0 AND ps.%s < 18000
+                ]], dur, tbl, dur, dur)
+
+                if min_time and min_time > 0 then
+                    sql = sql .. " AND ps.start_time >= " .. tostring(min_time)
+                end
+                sql = sql .. " ORDER BY ps.start_time ASC"
+
+                -- Method 1: Prepared statement with stmt:step(row)
+                local ok_prep, stmt = pcall(function() return db:prepare(sql) end)
+                if ok_prep and stmt then
+                    local row = {}
+                    while true do
+                        local ok_s, has_data = pcall(function() return stmt:step(row) end)
+                        if not ok_s or not has_data then break end
+
+                        local title = tostring(row[1] or "")
+                        local authors = tostring(row[2] or "")
+                        local page = tonumber(row[3]) or 1
+                        local st = tonumber(row[4]) or 0
+                        local d_val = tonumber(row[5]) or 0
+                        local date_str = ""
+                        if st > 0 then
+                            pcall(function() date_str = os.date("%Y-%m-%d", st) end)
+                        end
+
+                        if title ~= "" and st > 0 then
+                            table.insert(sessions, {
+                                book_title = title,
+                                book_authors = authors,
+                                page = page,
+                                start_time = st,
+                                duration = d_val,
+                                date_str = date_str,
+                            })
+                        end
+                    end
+                    pcall(function() stmt:close() end)
+                    if #sessions > 0 then
+                        found = true
                         break
                     end
                 end
-            end
-        end)
 
-        local sql = string.format([[
-            SELECT b.title, b.authors, ps.page, ps.start_time, ps.%s AS dur
-            FROM page_stat ps
-            JOIN book b ON b.id = ps.id_book
-            WHERE ps.%s > 0 AND ps.%s < 18000
-        ]], dur_col, dur_col, dur_col)
-
-        if min_time and min_time > 0 then
-            sql = sql .. " AND ps.start_time >= " .. tostring(min_time)
-        end
-        sql = sql .. " ORDER BY ps.start_time ASC"
-
-        local res = db:exec(sql)
-        if res and res.title then
-            local n = #res.title
-            for i = 1, n do
-                local st = tonumber(res.start_time[i]) or 0
-                local dur = tonumber(res.dur[i]) or 0
-                local pg = tonumber(res.page[i]) or 1
-                local title = tostring(res.title[i] or "")
-                local authors = tostring(res.authors and res.authors[i] or "")
-                local date_str = ""
-                if st > 0 then
-                    pcall(function() date_str = os.date("%Y-%m-%d", st) end)
+                -- Method 2: db:exec(sql) fallback
+                if not found then
+                    local ok_exec, res = pcall(function() return db:exec(sql) end)
+                    if ok_exec and res and (res.title or res[1]) then
+                        local col_title = res.title or res[1]
+                        local col_authors = res.authors or res[2]
+                        local col_page = res.page or res[3]
+                        local col_time = res.start_time or res[4]
+                        local col_dur = res[dur] or res[5]
+                        local n = col_title and #col_title or 0
+                        for i = 1, n do
+                            local st = tonumber(col_time and col_time[i]) or 0
+                            local d_val = tonumber(col_dur and col_dur[i]) or 0
+                            local pg = tonumber(col_page and col_page[i]) or 1
+                            local title = tostring(col_title and col_title[i] or "")
+                            local authors = tostring(col_authors and col_authors[i] or "")
+                            local date_str = ""
+                            if st > 0 then
+                                pcall(function() date_str = os.date("%Y-%m-%d", st) end)
+                            end
+                            if title ~= "" and st > 0 then
+                                table.insert(sessions, {
+                                    book_title = title,
+                                    book_authors = authors,
+                                    page = pg,
+                                    start_time = st,
+                                    duration = d_val,
+                                    date_str = date_str,
+                                })
+                            end
+                        end
+                        if #sessions > 0 then
+                            found = true
+                            break
+                        end
+                    end
                 end
-                table.insert(sessions, {
-                    book_title = title,
-                    book_authors = authors,
-                    page = pg,
-                    start_time = st,
-                    duration = dur,
-                    date_str = date_str,
-                })
             end
+            if found then break end
         end
     end)
 
@@ -1138,7 +1199,19 @@ function StoryKore:doSync(force_full)
     end
 
     local lua_files = self:scanLuaFiles(docs_dir, min_mtime)
-    local sessions = self:extractSessions(stats_path, force_full and nil or min_mtime)
+
+    -- In incremental sync, always send at least the last 14 days of reading sessions
+    -- Cloudflare D1 uses INSERT OR IGNORE, guaranteeing today's sessions are never skipped
+    local session_min_time = nil
+    if not force_full then
+        local fourteen_days_ago = os.time() - (14 * 86400)
+        if min_mtime then
+            session_min_time = math.min(min_mtime, fourteen_days_ago)
+        else
+            session_min_time = fourteen_days_ago
+        end
+    end
+    local sessions = self:extractSessions(stats_path, session_min_time)
 
     if not stats_b64 and #lua_files == 0 and #sessions == 0 then
         return nil, _("No KOReader reading data found to sync.\n\n" ..
@@ -1296,8 +1369,11 @@ end
 
 function StoryKore:showStatusDialog()
     local docs_dir = self:getDocumentsDir()
-    local has_stats = self:getStatisticsDb() ~= nil
+    local _, stats_path = self:getStatisticsDb()
+    local has_stats = stats_path ~= nil
     local lua_count = #self:scanLuaFiles(docs_dir)
+    local sample_sessions = self:extractSessions(stats_path, os.time() - (14 * 86400))
+    local sess_count = #sample_sessions
 
     local text = string.format(
         _("StoryKore Sync Status:\n\n" ..
@@ -1306,6 +1382,7 @@ function StoryKore:showStatusDialog()
           "• Username: %s\n" ..
           "• Auto Wi-Fi: %s\n" ..
           "• Statistics Database: %s\n" ..
+          "• Sessions (last 14 days): %d found\n" ..
           "• Book metadata (.lua): %d found\n" ..
           "• Books directory: %s\n" ..
           "• Last sync: %s"),
@@ -1314,6 +1391,7 @@ function StoryKore:showStatusDialog()
         self.settings.username ~= "" and self.settings.username or _("(Not configured)"),
         self.settings.auto_manage_wifi and _("Enabled (Connect -> Sync -> Disconnect)") or _("Disabled (Manual)"),
         has_stats and _("Detected (statistics.sqlite3)") or _("Not found"),
+        sess_count,
         lua_count,
         docs_dir,
         self.settings.last_sync ~= "" and self.settings.last_sync or _("Never")
