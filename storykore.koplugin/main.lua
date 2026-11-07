@@ -191,7 +191,27 @@ local function read_text_file(filepath)
 end
 
 local DEFAULT_SERVER_URL = "https://storykore.pages.dev"
-local PLUGIN_VERSION = "1.3.0"
+local PLUGIN_VERSION = "1.4.0"
+local GITHUB_API_LATEST = "https://api.github.com/repos/javiclement/storykore-koplugin/releases/latest"
+local GITHUB_RAW_MAIN = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/main.lua"
+local GITHUB_RAW_META = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/_meta.lua"
+
+local function parse_version(v_str)
+    if not v_str then return 0, 0, 0 end
+    local clean = tostring(v_str):gsub("^v", ""):gsub("%s+", "")
+    local major, minor, patch = clean:match("^(%d+)%.(%d+)%.?(%d*)")
+    return tonumber(major) or 0, tonumber(minor) or 0, tonumber(patch) or 0
+end
+
+local function is_newer_version(latest_v, current_v)
+    local l_maj, l_min, l_pat = parse_version(latest_v)
+    local c_maj, c_min, c_pat = parse_version(current_v)
+    if l_maj > c_maj then return true end
+    if l_maj < c_maj then return false end
+    if l_min > c_min then return true end
+    if l_min < c_min then return false end
+    return l_pat > c_pat
+end
 
 local StoryKore = WidgetContainer:extend{
     name = "storykore",
@@ -295,19 +315,16 @@ function StoryKore:addToMainMenu(menu_items)
                 end,
             },
             {
-                text_func = function()
-                    local url = self.settings.server_url
-                    if not url or url == "" then return _("Server: ") .. DEFAULT_SERVER_URL end
-                    return _("Server: ") .. url
-                end,
-                callback = function()
-                    self:editServerUrl()
-                end,
-            },
-            {
                 text = _("Test connection"),
                 callback = function()
                     self:testConnection()
+                end,
+            },
+            {
+                text = _("Check for updates"),
+                help_text = _("Checks for newer versions on GitHub and updates StoryKore automatically."),
+                callback = function()
+                    self:checkAndAutoUpdate()
                 end,
             },
             {
@@ -683,6 +700,234 @@ function StoryKore:testConnection()
         turn_on_wifi_and_run(run_test)
     else
         self:runOnline(run_test)
+    end
+end
+
+function StoryKore:getPluginDir()
+    local str = debug.getinfo(1, "S").source
+    if str and str:sub(1, 1) == "@" then str = str:sub(2) end
+    if str then
+        local dir = str:match("^(.*[/\\])")
+        if dir and lfs and lfs.attributes(dir, "mode") == "directory" then
+            return dir
+        end
+    end
+    local candidates = {
+        "/mnt/us/koreader/plugins/storykore.koplugin/",
+        "/mnt/us/documents/koreader/plugins/storykore.koplugin/",
+        "/mnt/onboard/.koreader/plugins/storykore.koplugin/",
+        "/sdcard/koreader/plugins/storykore.koplugin/",
+        "plugins/storykore.koplugin/",
+    }
+    for _, p in ipairs(candidates) do
+        if lfs and lfs.attributes(p, "mode") == "directory" then
+            return p
+        end
+    end
+    return "./plugins/storykore.koplugin/"
+end
+
+function StoryKore:checkAndAutoUpdate()
+    local auto_wifi = self.settings.auto_manage_wifi == true
+
+    local function run_check()
+        local info = InfoMessage and InfoMessage:new{
+            text = _("StoryKore\n\n🔍 Checking for updates on GitHub...\nPlease wait."),
+        }
+        if info then UIManager:show(info) end
+
+        UIManager:nextTick(function()
+            local latest_tag = nil
+            local download_url = nil
+            local release_notes = nil
+
+            -- 1. Try StoryKore Cloudflare API first (fast & no GitHub rate limits)
+            local base_url = (self.settings.server_url and self.settings.server_url ~= "") and self.settings.server_url or DEFAULT_SERVER_URL
+            local code, body = self:httpRequest({
+                url = base_url:gsub("/+$", "") .. "/api/plugin/latest",
+                method = "GET",
+                headers = {
+                    ["Accept"] = "application/json",
+                    ["User-Agent"] = "StoryKore-KOReader/" .. PLUGIN_VERSION,
+                },
+            })
+
+            if code == 200 and body then
+                local data = json_decode(body)
+                if data and (data.version or data.tag_name) then
+                    latest_tag = data.version or data.tag_name
+                    download_url = data.download_url
+                    release_notes = data.release_notes
+                end
+            end
+
+            -- 2. Fallback to GitHub Releases API
+            if not latest_tag then
+                local gh_code, gh_body = self:httpRequest({
+                    url = GITHUB_API_LATEST,
+                    method = "GET",
+                    headers = {
+                        ["Accept"] = "application/vnd.github.v3+json",
+                        ["User-Agent"] = "StoryKore-KOReader-Plugin/" .. PLUGIN_VERSION,
+                    },
+                })
+                if gh_code == 200 and gh_body then
+                    local gh_data = json_decode(gh_body)
+                    if gh_data and gh_data.tag_name then
+                        latest_tag = gh_data.tag_name
+                        release_notes = gh_data.body
+                    end
+                end
+            end
+
+            -- 3. Fallback to inspect raw main.lua directly
+            if not latest_tag then
+                local raw_code, raw_body = self:httpRequest({
+                    url = GITHUB_RAW_MAIN,
+                    method = "GET",
+                    headers = { ["User-Agent"] = "StoryKore-KOReader/" .. PLUGIN_VERSION },
+                })
+                if raw_code == 200 and raw_body then
+                    local v_match = raw_body:match('PLUGIN_VERSION%s*=%s*"([^"]+)"')
+                    if v_match then
+                        latest_tag = v_match
+                    end
+                end
+            end
+
+            if info then UIManager:close(info) end
+
+            if not latest_tag then
+                if auto_wifi then turn_off_wifi() end
+                show_message(_("Could not check for updates.\n\nPlease verify your internet connection."), 5)
+                return
+            end
+
+            if not is_newer_version(latest_tag, PLUGIN_VERSION) then
+                if auto_wifi then turn_off_wifi() end
+                show_message(_("✓ StoryKore is up to date!\n\nInstalled version: v") .. PLUGIN_VERSION .. _("\nLatest version: v") .. tostring(latest_tag):gsub("^v", ""), 5)
+                return
+            end
+
+            -- Newer version available! Prompt user to update
+            local new_v_clean = tostring(latest_tag):gsub("^v", "")
+            local update_msg = string.format(
+                _("New StoryKore update available!\n\n" ..
+                  "• Current version: v%s\n" ..
+                  "• New version: v%s\n\n" ..
+                  "Would you like to install the update automatically?"),
+                PLUGIN_VERSION,
+                new_v_clean
+            )
+
+            local function proceed_update()
+                local updating_info = InfoMessage and InfoMessage:new{
+                    text = _("StoryKore\n\n⬇️ Downloading and installing update v") .. new_v_clean .. _("...\nPlease wait."),
+                }
+                if updating_info then UIManager:show(updating_info) end
+
+                UIManager:nextTick(function()
+                    local plugin_dir = self:getPluginDir()
+
+                    -- Download raw main.lua and _meta.lua
+                    local m_code, new_main = self:httpRequest({
+                        url = GITHUB_RAW_MAIN,
+                        method = "GET",
+                        headers = { ["User-Agent"] = "StoryKore-KOReader/" .. PLUGIN_VERSION },
+                    })
+                    local meta_code, new_meta = self:httpRequest({
+                        url = GITHUB_RAW_META,
+                        method = "GET",
+                        headers = { ["User-Agent"] = "StoryKore-KOReader/" .. PLUGIN_VERSION },
+                    })
+
+                    if updating_info then UIManager:close(updating_info) end
+                    if auto_wifi then turn_off_wifi() end
+
+                    if m_code ~= 200 or not new_main or #new_main < 5000 or not new_main:find("PLUGIN_VERSION") then
+                        show_message(_("Update failed:\nCould not download complete plugin files from GitHub."), 6)
+                        return
+                    end
+
+                    -- Backup existing main.lua
+                    local current_main = read_text_file(plugin_dir .. "main.lua")
+                    if current_main and #current_main > 0 then
+                        local bak = io.open(plugin_dir .. "main.lua.bak", "wb")
+                        if bak then
+                            bak:write(current_main)
+                            bak:close()
+                        end
+                    end
+
+                    -- Write new main.lua
+                    local ok_main = false
+                    local f_main = io.open(plugin_dir .. "main.lua", "wb")
+                    if f_main then
+                        f_main:write(new_main)
+                        f_main:close()
+                        ok_main = true
+                    end
+
+                    if meta_code == 200 and new_meta and #new_meta > 50 then
+                        local f_meta = io.open(plugin_dir .. "_meta.lua", "wb")
+                        if f_meta then
+                            f_meta:write(new_meta)
+                            f_meta:close()
+                        end
+                    end
+
+                    if not ok_main then
+                        show_message(_("Error saving update files to:\n") .. plugin_dir, 6)
+                        return
+                    end
+
+                    -- Update successful!
+                    local success_text = string.format(
+                        _("✓ StoryKore updated to v%s successfully!\n\n" ..
+                          "Restart KOReader to apply the new update."),
+                        new_v_clean
+                    )
+
+                    if ConfirmBox then
+                        UIManager:show(ConfirmBox:new{
+                            text = success_text .. _("\n\nWould you like to restart KOReader now?"),
+                            ok_text = _("Restart Now"),
+                            cancel_text = _("Later"),
+                            ok_callback = function()
+                                local Dispatcher = safe_require("dispatcher")
+                                if Dispatcher and Dispatcher.execute then
+                                    Dispatcher:execute("restart_koreader")
+                                elseif UIManager and UIManager.restartKOReader then
+                                    UIManager:restartKOReader()
+                                end
+                            end,
+                        })
+                    else
+                        show_message(success_text, 8)
+                    end
+                end)
+            end
+
+            if ConfirmBox then
+                UIManager:show(ConfirmBox:new{
+                    text = update_msg,
+                    ok_text = _("Update Now"),
+                    cancel_text = _("Later"),
+                    ok_callback = proceed_update,
+                    cancel_callback = function()
+                        if auto_wifi then turn_off_wifi() end
+                    end,
+                })
+            else
+                proceed_update()
+            end
+        end)
+    end
+
+    if auto_wifi then
+        turn_on_wifi_and_run(run_check)
+    else
+        self:runOnline(run_check)
     end
 end
 
