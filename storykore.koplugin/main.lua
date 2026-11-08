@@ -191,7 +191,7 @@ local function read_text_file(filepath)
 end
 
 local DEFAULT_SERVER_URL = "https://storykore.app"
-local PLUGIN_VERSION = "1.5.1"
+local PLUGIN_VERSION = "1.5.2"
 local GITHUB_API_LATEST = "https://api.github.com/repos/javiclement/storykore-koplugin/releases/latest"
 local GITHUB_RAW_MAIN = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/main.lua"
 local GITHUB_RAW_META = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/_meta.lua"
