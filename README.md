@@ -1,20 +1,20 @@
 # 📖 StoryKore — Cloud Platform & KOReader Sync Plugin
 
 [![KOReader](https://img.shields.io/badge/KOReader-Plugin%20Compatible-blue.svg)](https://github.com/koreader/koreader)
-[![Web Platform](https://img.shields.io/badge/Web%20App-storykore.pages.dev-amber.svg)](https://storykore.pages.dev/)
+[![Web Platform](https://img.shields.io/badge/Web%20App-storykore.app-amber.svg)](https://storykore.app/)
 [![Devices](https://img.shields.io/badge/Devices-Kindle%20%7C%20Kobo%20%7C%20Android%20%7C%20PocketBook-emerald.svg)](#-supported-devices)
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 [![Public Beta](https://img.shields.io/badge/Status-Public%20Open%20Beta-orange.svg)](#-open-beta--your-feedback-matters)
 [![Support on Ko-fi](https://img.shields.io/badge/Support%20on-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/javivisan)
 
 > **A modern Goodreads & StoryGraph companion for KOReader.**  
-> Automatically sync reading progress, actual reading time, daily heatmaps, and book highlights from your Kindle or Kobo straight to the cloud in one tap over Wi-Fi.
+> Automatically sync reading progress, actual reading time, daily heatmaps, and book highlights from your Kindle, Kobo, Boox, Android, or PocketBook straight to the cloud in one tap over Wi-Fi.
 
 ---
 
 ## 🌐 Live Web Platform
 
-👉 **Access the Web App:** [**https://storykore.pages.dev/**](https://storykore.pages.dev/)
+👉 **Access the Web App:** [**https://storykore.app/**](https://storykore.app/)
 
 **StoryKore** is a clean, minimalist cloud ecosystem designed specifically for readers using **KOReader**. It unites your reading history across devices, displays rich visual statistics, organizes your book quotes with 1-click Markdown export, and connects you to a vibrant community of fellow readers.
 
@@ -23,7 +23,7 @@
 ## 📸 How StoryKore Works
 
 ### 1. Create an Account in 10 Seconds
-Head to [storykore.pages.dev](https://storykore.pages.dev/) and switch to the **Register** tab. Choose a username and password to start syncing your books immediately—no email, verification codes, or personal data required!
+Head to [storykore.app](https://storykore.app/) and switch to the **Register** tab. Choose a username, email, and password to start syncing your books immediately!
 
 ![StoryKore Welcome & Registration](screenshots/01_landing_en.png)
 ![StoryKore Create Account](screenshots/02_register_en.png)
@@ -138,7 +138,7 @@ storykore.koplugin/
    - Books updated with new progress % and pages.
    - Highlights and notes synchronized.
    - Computed reading sessions.
-4. Open [**https://storykore.pages.dev/**](https://storykore.pages.dev/) on your phone, tablet, or desktop to see your updated dashboard!
+4. Open [**https://storykore.app/**](https://storykore.app/) on your phone, tablet, or desktop to see your updated dashboard!
 
 ---
 
@@ -168,7 +168,7 @@ StoryKore is currently in **Public Beta**. Your feedback as a KOReader user is e
 - Using an unusual e-reader model and want to share your experience?
 
 👉 **Open an Issue on GitHub:** [GitHub Issues](https://github.com/javiclement/storykore-koplugin/issues)  
-👉 **Or visit the web platform:** [https://storykore.pages.dev/](https://storykore.pages.dev/)
+👉 **Or visit the web platform:** [https://storykore.app/](https://storykore.app/)
 
 ---
 

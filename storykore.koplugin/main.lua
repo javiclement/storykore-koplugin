@@ -190,7 +190,7 @@ local function read_text_file(filepath)
     return content
 end
 
-local DEFAULT_SERVER_URL = "https://storykore.pages.dev"
+local DEFAULT_SERVER_URL = "https://storykore.app"
 local PLUGIN_VERSION = "1.5.1"
 local GITHUB_API_LATEST = "https://api.github.com/repos/javiclement/storykore-koplugin/releases/latest"
 local GITHUB_RAW_MAIN = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/main.lua"
@@ -234,9 +234,8 @@ function StoryKore:loadSettings()
         self.settings = {}
     end
     local s_url = self.settings.server_url
-    if not s_url or s_url == "" or s_url == "https://" or s_url == "http://" or (type(s_url) == "string" and s_url:find("onrender.com")) then
+    if not s_url or s_url == "" or s_url == "https://" or s_url == "http://" or (type(s_url) == "string" and (s_url:find("onrender.com") or s_url:find("pages.dev"))) then
         self.settings.server_url = DEFAULT_SERVER_URL
-        self.settings.token = "" -- Force fresh authentication on Cloudflare
         self:saveSettings()
     end
     self.settings.username = self.settings.username or ""
