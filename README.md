@@ -85,6 +85,9 @@ The `storykore.koplugin` is built in lightweight Lua and runs on any device supp
 
 ## 🚀 Plugin Installation (Step-by-Step)
 
+> 💡 **Pro-Tip: 1-Click Preconfigured Download (Zero Typing!)**  
+> If you already have an account on [**storykore.app**](https://storykore.app/), log in and click **Download Preconfigured Plugin** from the **Sync** or **Profile** modal. It automatically includes your account link and sync token—you won't have to type anything on your e-reader!
+
 ### Step 1: Download the plugin
 Download or clone this repository, or grab `storykore.koplugin.zip` from the [Releases](https://github.com/javiclement/storykore-koplugin/releases) page. The folder you need is:
 ```text
@@ -105,29 +108,33 @@ storykore.koplugin/
    └── plugins/
        └── storykore.koplugin/
            ├── _meta.lua
-           └── main.lua
+           ├── main.lua
+           └── settings.json (optional, included if downloaded from web)
    ```
 5. Safely eject your e-reader from your computer and open (or restart) **KOReader**.
 
 ---
 
-## ⚙️ KOReader Setup (One-Time Configuration)
+## ⚙️ KOReader Setup (Minimalist & Streamlined)
 
+If you used the **1-Click Preconfigured ZIP** from [storykore.app](https://storykore.app/), your account is already connected and you are completely ready to sync!
+
+If you downloaded from GitHub:
 1. In KOReader, tap the top of the screen to open the main menu.
 2. Tap the **Tools** icon (cogwheel / wrench).
-3. Select the **StoryKore** menu:
-   - Tap **Username:** and enter your StoryKore username or email.
-   - Tap **Password:** and enter your password.
-   - *(Optional & Highly Recommended)* Enable **Auto Wi-Fi (Battery Saver)**: When checked, StoryKore will turn on your e-reader's Wi-Fi automatically, synchronize all your books, and immediately turn Wi-Fi back off to preserve battery life!
-4. Tap **Test connection**: KOReader will verify your credentials and confirm that everything is connected.
-5. You can view the installed version and check for new releases directly from the menu: **Check for updates (v1.4.0)**. When a newer release is published, StoryKore updates itself automatically in 1 tap!
+3. Select **StoryKore**:
+   - Tap **Account: (Not configured)** and enter your StoryKore username and password (or sync token).
+4. **Auto Wi-Fi is enabled by default**: StoryKore will turn on Wi-Fi automatically, synchronize all your books, and immediately turn Wi-Fi back off to preserve battery life!
+5. **Automatic Updates**: Every time you sync, StoryKore silently checks for updates and installs them in the background.
 
 ---
 
 ## 🔄 How to Sync Your Reading
 
-### Option A: Clean 1-Tap Workflow (Auto Wi-Fi Enabled)
-1. Tap **StoryKore** > **Sync now**.
+### One-Touch Workflow (⚡ Sync reading stats)
+1. Tap **StoryKore** > **⚡ Sync reading stats**.
+2. StoryKore turns on Wi-Fi, uploads newly read pages, bookmarks, and quotes, checks for updates, and turns Wi-Fi off.
+3. You're done in 3 seconds!
 2. That's it! StoryKore powers on Wi-Fi, uploads all your reading sessions and highlights, and powers off Wi-Fi immediately. You never need to fiddle with Wi-Fi settings again.
 
 ### Option B: Manual Wi-Fi

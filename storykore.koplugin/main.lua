@@ -191,7 +191,7 @@ local function read_text_file(filepath)
 end
 
 local DEFAULT_SERVER_URL = "https://storykore.app"
-local PLUGIN_VERSION = "1.5.2"
+local PLUGIN_VERSION = "1.6.0"
 local GITHUB_API_LATEST = "https://api.github.com/repos/javiclement/storykore-koplugin/releases/latest"
 local GITHUB_RAW_MAIN = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/main.lua"
 local GITHUB_RAW_META = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/_meta.lua"
@@ -245,8 +245,37 @@ function StoryKore:loadSettings()
     self.settings.last_sync_timestamp = self.settings.last_sync_timestamp or 0
     self.settings.custom_docs_dir = self.settings.custom_docs_dir or ""
     if self.settings.auto_manage_wifi == nil then
-        self.settings.auto_manage_wifi = false
+        self.settings.auto_manage_wifi = true
     end
+
+    -- Automatic import from pre-configured settings.json (e.g. from 1-click web download)
+    pcall(function()
+        local plugin_dir = self:getPluginDir()
+        local cfg_path = plugin_dir .. "settings.json"
+        local f = io.open(cfg_path, "rb")
+        if f then
+            local content = f:read("*all")
+            f:close()
+            if content and #content > 0 then
+                local ok, parsed = pcall(json_decode, content)
+                if ok and type(parsed) == "table" then
+                    if parsed.username and parsed.username ~= "" then
+                        self.settings.username = parsed.username
+                    end
+                    if parsed.token and parsed.token ~= "" then
+                        self.settings.token = parsed.token
+                    end
+                    if parsed.server_url and parsed.server_url ~= "" then
+                        self.settings.server_url = parsed.server_url
+                    end
+                    if parsed.auto_manage_wifi ~= nil then
+                        self.settings.auto_manage_wifi = parsed.auto_manage_wifi
+                    end
+                    self:saveSettings()
+                end
+            end
+        end
+    end)
 end
 
 function StoryKore:saveSettings()
@@ -255,95 +284,91 @@ function StoryKore:saveSettings()
     end
 end
 
--- Register StoryKore in main menu
+-- Register StoryKore in main menu (Ultra-minimalist, distraction-free for e-ink readers)
 function StoryKore:addToMainMenu(menu_items)
+    local has_account = (self.settings.username and self.settings.username ~= "") or
+                        (self.settings.token and self.settings.token ~= "")
+
+    local account_label = has_account and
+        (_("Account: @") .. (self.settings.username ~= "" and self.settings.username or "linked") .. _(" (Connected)")) or
+        _("Account: (Not configured)")
+
     menu_items.storykore = {
         text = _("StoryKore"),
         sub_item_table = {
+            -- 1. Main Action: One-touch sync with auto-wifi & auto-update
             {
-                text = _("Sync now (Incremental)"),
-                help_text = _("Fast sync: uploads only books and notes modified since your last sync."),
+                text = _("⚡ Sync reading stats"),
+                help_text = _("One-touch sync: turns on Wi-Fi, uploads books and notes, auto-updates plugin if newer version is available, and turns off Wi-Fi."),
                 callback = function()
                     self:onSyncTap(false)
                 end,
             },
+            -- 2. Account Status / Configuration
             {
-                text = _("Force full sync"),
-                help_text = _("Full sync: rescans and uploads your entire library from scratch."),
-                callback = function()
-                    self:onSyncTap(true)
-                end,
-            },
-            {
-                text = _("Auto Wi-Fi (Battery Saver)"),
-                checked_func = function()
-                    return self.settings.auto_manage_wifi == true
-                end,
-                help_text = _("Automatically enables Wi-Fi to sync and turns it off when done to save battery."),
-                callback = function(touchmenu_instance)
-                    self.settings.auto_manage_wifi = not self.settings.auto_manage_wifi
-                    self:saveSettings()
-                    if touchmenu_instance and touchmenu_instance.updateItems then
-                        touchmenu_instance:updateItems()
-                    end
-                    if self.settings.auto_manage_wifi then
-                        show_message(_("✓ Auto Wi-Fi enabled:\n\nWi-Fi will turn on automatically during sync and turn off immediately after to save battery."), 5)
-                    else
-                        show_message(_("Auto Wi-Fi disabled:\n\nWi-Fi will be managed manually."), 3)
-                    end
-                end,
-            },
-            {
-                text_func = function()
-                    local u = self.settings.username
-                    if not u or u == "" then return _("Username: (Not configured)") end
-                    return _("Username: ") .. u
-                end,
-                callback = function()
-                    self:editUsername()
-                end,
-            },
-            {
-                text_func = function()
-                    local p = self.settings.password
-                    if not p or p == "" then return _("Password: (Not configured)") end
-                    return _("Password: ••••••••")
-                end,
-                callback = function()
-                    self:editPassword()
-                end,
-            },
-            {
-                text = _("Test connection"),
-                callback = function()
-                    self:testConnection()
-                end,
-            },
-            {
-                text = _("Check for updates"),
-                help_text = _("Checks for newer versions on GitHub and updates StoryKore automatically."),
-                callback = function()
-                    self:checkAndAutoUpdate()
-                end,
-            },
-            {
-                text = _("Sync status & info"),
-                callback = function()
-                    self:showStatusDialog()
-                end,
-            },
-            {
-                text = _("Account settings (User / Password)"),
+                text = account_label,
+                help_text = _("View or modify your StoryKore account credentials."),
                 callback = function()
                     self:showSettingsDialog()
                 end,
             },
+            -- 3. Advanced Options Submenu (Collapsed for a clean, minimal interface)
             {
-                text = _("Plugin Version: v") .. PLUGIN_VERSION,
-                callback = function()
-                    self:showStatusDialog()
-                end,
-            },
+                text = _("⚙️ Advanced options"),
+                sub_item_table = {
+                    {
+                        text = _("Force full sync"),
+                        help_text = _("Full sync: rescans and uploads your entire library from scratch."),
+                        callback = function()
+                            self:onSyncTap(true)
+                        end,
+                    },
+                    {
+                        text = _("Test connection"),
+                        callback = function()
+                            self:testConnection()
+                        end,
+                    },
+                    {
+                        text = _("Check for updates"),
+                        help_text = _("Checks for newer versions on GitHub and updates StoryKore automatically."),
+                        callback = function()
+                            self:checkAndAutoUpdate()
+                        end,
+                    },
+                    {
+                        text = _("Auto Wi-Fi: ") .. (self.settings.auto_manage_wifi and _("Enabled (Auto-disconnect)") or _("Disabled")),
+                        checked_func = function()
+                            return self.settings.auto_manage_wifi == true
+                        end,
+                        help_text = _("Automatically enables Wi-Fi to sync and turns it off when done to save battery."),
+                        callback = function(touchmenu_instance)
+                            self.settings.auto_manage_wifi = not self.settings.auto_manage_wifi
+                            self:saveSettings()
+                            if touchmenu_instance and touchmenu_instance.updateItems then
+                                touchmenu_instance:updateItems()
+                            end
+                            if self.settings.auto_manage_wifi then
+                                show_message(_("✓ Auto Wi-Fi enabled:\n\nWi-Fi will turn on automatically during sync and turn off immediately after to save battery."), 5)
+                            else
+                                show_message(_("Auto Wi-Fi disabled:\n\nWi-Fi will be managed manually."), 3)
+                            end
+                        end,
+                    },
+                    {
+                        text = _("Sync status & info"),
+                        callback = function()
+                            self:showStatusDialog()
+                        end,
+                    },
+                    {
+                        text = _("Plugin Version: v") .. PLUGIN_VERSION,
+                        callback = function()
+                            self:showStatusDialog()
+                        end,
+                    },
+                }
+            }
         }
     }
 end
@@ -945,6 +970,67 @@ function StoryKore:checkAndAutoUpdate()
     end
 end
 
+-- Seamless background update during sync without user prompts
+function StoryKore:installUpdateSilently(new_version, custom_url)
+    local plugin_dir = self:getPluginDir()
+    local url_main = custom_url or GITHUB_RAW_MAIN
+    local m_code, new_main = self:httpRequest({
+        url = url_main,
+        method = "GET",
+        headers = { ["User-Agent"] = "StoryKore-KOReader/" .. PLUGIN_VERSION },
+    })
+
+    if m_code == 200 and new_main and #new_main > 5000 and new_main:find("PLUGIN_VERSION") then
+        -- Backup existing main.lua
+        local current_main = read_text_file(plugin_dir .. "main.lua")
+        if current_main and #current_main > 0 then
+            local bak = io.open(plugin_dir .. "main.lua.bak", "wb")
+            if bak then
+                bak:write(current_main)
+                bak:close()
+            end
+        end
+
+        -- Write new main.lua
+        local f_main = io.open(plugin_dir .. "main.lua", "wb")
+        if f_main then
+            f_main:write(new_main)
+            f_main:close()
+        end
+
+        -- Update _meta.lua
+        local meta_code, new_meta = self:httpRequest({
+            url = GITHUB_RAW_META,
+            method = "GET",
+            headers = { ["User-Agent"] = "StoryKore-KOReader/" .. PLUGIN_VERSION },
+        })
+        if meta_code == 200 and new_meta and #new_meta > 50 then
+            local f_meta = io.open(plugin_dir .. "_meta.lua", "wb")
+            if f_meta then
+                f_meta:write(new_meta)
+                f_meta:close()
+            end
+        end
+
+        -- Hot-reload into running instance
+        pcall(function()
+            local chunk = loadfile(plugin_dir .. "main.lua")
+            if chunk then
+                local mod = chunk()
+                if mod and type(mod) == "table" then
+                    for k, v in pairs(mod) do
+                        if type(v) == "function" then
+                            StoryKore[k] = v
+                        end
+                    end
+                end
+            end
+        end)
+        return true
+    end
+    return false
+end
+
 function StoryKore:getDocumentsDir()
     if not lfs then return "/mnt/us/documents" end
     local custom = self.settings.custom_docs_dir
@@ -1263,6 +1349,17 @@ function StoryKore:doSync(force_full)
             self.settings.last_sync_timestamp = os.time()
             self.settings.last_sync = os.date("%Y-%m-%d %H:%M:%S")
             self:saveSettings()
+
+            -- Seamless background auto-update during sync if server advertises newer version
+            if data.latest_plugin_version and is_newer_version(data.latest_plugin_version, PLUGIN_VERSION) then
+                pcall(function()
+                    local ok = self:installUpdateSilently(data.latest_plugin_version, data.download_url)
+                    if ok then
+                        data.updated_version = data.latest_plugin_version
+                    end
+                end)
+            end
+
             return data
         else
             return nil, _("The server responded with success but data format was unexpected.")
@@ -1275,11 +1372,13 @@ function StoryKore:doSync(force_full)
 end
 
 function StoryKore:onSyncTap(force_full)
-    if not self.settings.username or self.settings.username == "" or
-       not self.settings.password or self.settings.password == "" then
+    local has_creds = (self.settings.username and self.settings.username ~= "" and self.settings.password and self.settings.password ~= "") or
+                      (self.settings.token and self.settings.token ~= "")
+
+    if not has_creds then
         if ConfirmBox then
             UIManager:show(ConfirmBox:new{
-                text = _("Please configure your StoryKore account first (username and password).\n\nWould you like to configure it now?"),
+                text = _("Please configure your StoryKore account first.\n\nWould you like to configure it now?"),
                 ok_text = _("Configure"),
                 cancel_text = _("Cancel"),
                 ok_callback = function()
@@ -1332,14 +1431,19 @@ function StoryKore:onSyncTap(force_full)
                 local now_str = os.date("%Y-%m-%d %H:%M:%S")
                 local mode_tag = force_full and _("Full") or _("Incremental")
 
+                local update_note = ""
+                if result.updated_version then
+                    update_note = string.format(_("\n\n🚀 StoryKore automatically updated to v%s!"), result.updated_version)
+                end
+
                 local msg = string.format(
                     _("✓ StoryKore Sync v%s (%s) completed successfully\n\n" ..
                       "• New books imported: %d\n" ..
                       "• Books updated: %d\n" ..
                       "• Highlights & notes: %d\n" ..
                       "• Reading sessions: %d\n\n" ..
-                      "Date: %s%s"),
-                    PLUGIN_VERSION, mode_tag, b_imp, b_upd, hl_imp, sess_imp, now_str, wifi_status_text
+                      "Date: %s%s%s"),
+                    PLUGIN_VERSION, mode_tag, b_imp, b_upd, hl_imp, sess_imp, now_str, update_note, wifi_status_text
                 )
                 show_message(msg, 10)
             else
