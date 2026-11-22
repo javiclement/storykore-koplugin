@@ -191,10 +191,10 @@ local function read_text_file(filepath)
 end
 
 local DEFAULT_SERVER_URL = "https://storykore.app"
-local PLUGIN_VERSION = "1.6.3"
+local PLUGIN_VERSION = "1.6.4"
 local AUTO_SYNC_COOLDOWN_SECONDS = 300 -- 5 minutes interval between silent auto-syncs
 local NETWORK_DEBOUNCE_SECONDS = 30 -- 30 seconds debounce when Wi-Fi connects
-local CLEAN_CLOUDFLARE_IPS = { "104.21.96.15", "172.67.171.246", "104.21.45.1" }
+local CLEAN_CLOUDFLARE_IPS = { "104.21.96.15", "172.67.171.246", "104.21.45.1", "104.21.80.1" }
 local GITHUB_API_LATEST = "https://api.github.com/repos/javiclement/storykore-koplugin/releases/latest"
 local GITHUB_RAW_MAIN = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/main.lua"
 local GITHUB_RAW_META = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/_meta.lua"
@@ -576,12 +576,64 @@ function StoryKore:showSettingsDialog()
     if dialog.onShow then dialog:onShow() end
 end
 
--- Direct TLS socket request to clean Cloudflare Anycast IPs (bypasses regional ISP blocks in Spain)
-function StoryKore:directSocketRequest(req)
+-- Fallback helpers for bypassing regional ISP blocks in Spain
+local function try_monkeypatch_https(req, target_ip, plugin_ver)
+    local ok_http, http = pcall(require, "socket.http")
+    local ok_https, https = pcall(require, "ssl.https")
+    local ok_ltn12, ltn12 = pcall(require, "ltn12")
+    local ok_sock, socket = pcall(require, "socket")
+    if not (ok_http and ok_https and ok_ltn12 and ok_sock and socket and https) then
+        return nil, "Missing modules"
+    end
+
+    local orig_tcp = socket.tcp
+    -- Monkey-patch socket.tcp so connect() targets clean Anycast IP instead of blocked GeoDNS IP
+    socket.tcp = function(...)
+        local s = orig_tcp(...)
+        if s and s.connect then
+            local orig_connect = s.connect
+            s.connect = function(self_sock, host, port)
+                if (host == "storykore.app" or host == "storykore.pages.dev") and (port == 443 or port == "443") then
+                    return orig_connect(self_sock, target_ip, port)
+                end
+                return orig_connect(self_sock, host, port)
+            end
+        end
+        return s
+    end
+
+    local resp = {}
+    local hdrs = {}
+    for k, v in pairs(req.headers or {}) do hdrs[k] = v end
+    if req.body then hdrs["Content-Length"] = tostring(#req.body) end
+
+    local p = {
+        url = req.url,
+        method = req.method or "GET",
+        headers = hdrs,
+        source = req.body and ltn12.source.string(req.body) or nil,
+        sink = ltn12.sink.table(resp),
+    }
+
+    local req_ok, req_res, req_code, req_h = pcall(https.request, p)
+    socket.tcp = orig_tcp -- Always restore
+
+    if req_ok and req_res == 1 then
+        local st = tonumber(req_code) or req_code
+        local b = table.concat(resp)
+        local is_html = b:find("^%s*<html") or b:find("^%s*<!DOCTYPE") or b:find("bloqueado") or b:find("LaLiga") or b:find("Juzgado")
+        if not is_html and b and #b > 0 then
+            return st, b, req_h
+        end
+    end
+    return nil, "Monkeypatch failed"
+end
+
+local function try_direct_socket(req, target_ip, plugin_ver)
     local ok_sock, socket = pcall(require, "socket")
     local ok_ssl, ssl = pcall(require, "ssl")
     if not (ok_sock and ok_ssl and socket and ssl) then
-        return nil, "Direct socket SSL not supported"
+        return nil, "No socket/ssl"
     end
 
     local url = req.url or ""
@@ -589,99 +641,138 @@ function StoryKore:directSocketRequest(req)
     local path = url:match("^https?://[^/]+(/?.*)$") or "/"
     if path == "" then path = "/" end
 
-    local method = req.method or "GET"
-    local req_body = req.body or ""
-    local headers = req.headers or {}
+    local tcp = socket.tcp()
+    if not tcp then return nil end
+    tcp:settimeout(12)
 
-    for _, ip in ipairs(CLEAN_CLOUDFLARE_IPS) do
-        local tcp = socket.tcp()
-        if tcp then
-            tcp:settimeout(10)
-            local conn_ok = tcp:connect(ip, 443)
-            if conn_ok then
-                local ssl_params = {
-                    mode = "client",
-                    protocol = "any",
-                    verify = "none",
-                    options = "all",
-                    server_name = host,
-                }
-                local sconn, _ = ssl.wrap(tcp, ssl_params)
-                if sconn then
-                    sconn:settimeout(15)
-                    local hs_ok = sconn:dohandshake()
-                    if hs_ok then
-                        local req_str = method .. " " .. path .. " HTTP/1.1\r\n" ..
-                                        "Host: " .. host .. "\r\n" ..
-                                        "Connection: close\r\n" ..
-                                        "User-Agent: StoryKore-KOReader/" .. PLUGIN_VERSION .. "\r\n"
-                        for k, v in pairs(headers) do
-                            local kl = k:lower()
-                            if kl ~= "host" and kl ~= "connection" and kl ~= "content-length" then
-                                req_str = req_str .. k .. ": " .. tostring(v) .. "\r\n"
-                            end
-                        end
-                        if #req_body > 0 then
-                            req_str = req_str .. "Content-Length: " .. tostring(#req_body) .. "\r\n"
-                        end
-                        req_str = req_str .. "\r\n" .. req_body
+    local conn_ok = tcp:connect(target_ip, 443)
+    if not conn_ok then
+        tcp:close()
+        return nil
+    end
 
-                        sconn:send(req_str)
-
-                        local chunks = {}
-                        while true do
-                            local chunk, r_err, partial = sconn:receive(4096)
-                            if chunk then
-                                table.insert(chunks, chunk)
-                            elseif partial and #partial > 0 then
-                                table.insert(chunks, partial)
-                            end
-                            if r_err == "closed" or r_err then break end
-                        end
-                        sconn:close()
-
-                        local raw = table.concat(chunks)
-                        local sep = raw:find("\r\n\r\n", 1, true)
-                        if sep then
-                            local head = raw:sub(1, sep - 1)
-                            local b = raw:sub(sep + 4)
-                            local status = tonumber(head:match("HTTP/%d%.%d%s+(%d+)")) or 200
-
-                            -- De-chunk if transfer-encoding: chunked
-                            if head:lower():find("transfer%-encoding:%s*chunked") then
-                                local decoded = {}
-                                local pos = 1
-                                while pos <= #b do
-                                    local nl = b:find("\r\n", pos, true)
-                                    if not nl then break end
-                                    local hex = b:sub(pos, nl - 1):match("^%s*([0-9a-fA-F]+)")
-                                    local len = tonumber(hex, 16)
-                                    if not len or len == 0 then break end
-                                    table.insert(decoded, b:sub(nl + 2, nl + 1 + len))
-                                    pos = nl + 4 + len
-                                end
-                                b = table.concat(decoded)
-                            end
-
-                            -- Check that response is NOT an HTML ISP block page
-                            local is_html = b:find("^%s*<html") or b:find("^%s*<!DOCTYPE") or b:find("bloqueado") or b:find("LaLiga")
-                            if not is_html then
-                                return status, b
-                            end
-                        end
-                    else
-                        sconn:close()
-                    end
-                else
-                    tcp:close()
-                end
-            else
-                tcp:close()
-            end
+    local protocols = { "tlsv1_2", "any", "sslv23", "tlsv1" }
+    local sconn = nil
+    for _, proto in ipairs(protocols) do
+        local params = {
+            mode = "client",
+            protocol = proto,
+            verify = "none",
+            options = "all",
+        }
+        local sc, err = ssl.wrap(tcp, params)
+        if sc then
+            sconn = sc
+            break
         end
     end
 
-    return nil, "Clean Cloudflare IPs fallback failed"
+    if not sconn then
+        tcp:close()
+        return nil
+    end
+
+    -- Crucial: Set SNI before handshake for Cloudflare!
+    if sconn.sni then
+        pcall(function() sconn:sni(host) end)
+    end
+
+    sconn:settimeout(15)
+    local hs_ok = sconn:dohandshake()
+    if not hs_ok then
+        sconn:close()
+        return nil
+    end
+
+    local method = req.method or "GET"
+    local req_body = req.body or ""
+    local req_str = method .. " " .. path .. " HTTP/1.1\r\n" ..
+                    "Host: " .. host .. "\r\n" ..
+                    "Connection: close\r\n" ..
+                    "User-Agent: StoryKore-KOReader/" .. (plugin_ver or "1.6.4") .. "\r\n"
+
+    for k, v in pairs(req.headers or {}) do
+        local kl = k:lower()
+        if kl ~= "host" and kl ~= "connection" and kl ~= "content-length" then
+            req_str = req_str .. k .. ": " .. tostring(v) .. "\r\n"
+        end
+    end
+    if #req_body > 0 then
+        req_str = req_str .. "Content-Length: " .. tostring(#req_body) .. "\r\n"
+    end
+    req_str = req_str .. "\r\n" .. req_body
+
+    local sent = 0
+    local total = #req_str
+    while sent < total do
+        local i, err, partial = sconn:send(req_str, sent + 1)
+        if i then
+            sent = i
+        elseif partial then
+            sent = partial
+        else
+            sconn:close()
+            return nil
+        end
+    end
+
+    local chunks = {}
+    while true do
+        local chunk, r_err, partial = sconn:receive(4096)
+        if chunk then
+            table.insert(chunks, chunk)
+        elseif partial and #partial > 0 then
+            table.insert(chunks, partial)
+        end
+        if r_err == "closed" or r_err then break end
+    end
+    sconn:close()
+
+    local raw = table.concat(chunks)
+    local sep = raw:find("\r\n\r\n", 1, true)
+    if sep then
+        local head = raw:sub(1, sep - 1)
+        local b = raw:sub(sep + 4)
+        local status = tonumber(head:match("HTTP/%d%.%d%s+(%d+)")) or 200
+
+        if head:lower():find("transfer%-encoding:%s*chunked") then
+            local decoded = {}
+            local pos = 1
+            while pos <= #b do
+                local nl = b:find("\r\n", pos, true)
+                if not nl then break end
+                local hex = b:sub(pos, nl - 1):match("^%s*([0-9a-fA-F]+)")
+                local len = tonumber(hex, 16)
+                if not len or len == 0 then break end
+                table.insert(decoded, b:sub(nl + 2, nl + 1 + len))
+                pos = nl + 4 + len
+            end
+            b = table.concat(decoded)
+        end
+
+        local is_html = b:find("^%s*<html") or b:find("^%s*<!DOCTYPE") or b:find("bloqueado") or b:find("LaLiga") or b:find("Juzgado")
+        if not is_html and #b > 0 then
+            return status, b, {}
+        end
+    end
+    return nil
+end
+
+function StoryKore:cleanIpFallbackRequest(req)
+    for _, ip in ipairs(CLEAN_CLOUDFLARE_IPS) do
+        -- 1. Try socket hook with native ssl.https
+        local st, b, h = try_monkeypatch_https(req, ip, PLUGIN_VERSION)
+        if st and b then
+            return st, b, h
+        end
+
+        -- 2. Try direct socket with explicit SNI
+        local st2, b2, h2 = try_direct_socket(req, ip, PLUGIN_VERSION)
+        if st2 and b2 then
+            return st2, b2, h2
+        end
+    end
+    return nil, "All clean IP fallbacks failed"
 end
 
 -- Network request with lazy loading of network modules
@@ -734,13 +825,13 @@ function StoryKore:httpRequest(req)
         end
     end
 
-    -- Automatic transparent fallback to clean Cloudflare Anycast IPs
+    -- Automatic transparent fallback to clean Cloudflare Anycast IPs (bypasses Spanish football blocks)
     if (not ok) or (res ~= 1) or is_intercepted then
         local target_url = req.url or ""
         if target_url:find("storykore%.app") or target_url:find("storykore%.pages%.dev") then
-            local f_code, f_body = self:directSocketRequest(req)
+            local f_code, f_body, f_hdrs = self:cleanIpFallbackRequest(req)
             if f_code and f_body then
-                return f_code, f_body, {}
+                return f_code, f_body, f_hdrs or {}
             end
         end
     end
