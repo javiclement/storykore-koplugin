@@ -191,7 +191,7 @@ local function read_text_file(filepath)
 end
 
 local DEFAULT_SERVER_URL = "https://storykore.app"
-local PLUGIN_VERSION = "1.6.2"
+local PLUGIN_VERSION = "1.6.5"
 local AUTO_SYNC_COOLDOWN_SECONDS = 300 -- 5 minutes interval between silent auto-syncs
 local NETWORK_DEBOUNCE_SECONDS = 30 -- 30 seconds debounce when Wi-Fi connects
 local GITHUB_API_LATEST = "https://api.github.com/repos/javiclement/storykore-koplugin/releases/latest"
