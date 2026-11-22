@@ -191,9 +191,10 @@ local function read_text_file(filepath)
 end
 
 local DEFAULT_SERVER_URL = "https://storykore.app"
-local PLUGIN_VERSION = "1.6.2"
+local PLUGIN_VERSION = "1.6.3"
 local AUTO_SYNC_COOLDOWN_SECONDS = 300 -- 5 minutes interval between silent auto-syncs
 local NETWORK_DEBOUNCE_SECONDS = 30 -- 30 seconds debounce when Wi-Fi connects
+local CLEAN_CLOUDFLARE_IPS = { "104.21.96.15", "172.67.171.246", "104.21.45.1" }
 local GITHUB_API_LATEST = "https://api.github.com/repos/javiclement/storykore-koplugin/releases/latest"
 local GITHUB_RAW_MAIN = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/main.lua"
 local GITHUB_RAW_META = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/_meta.lua"
@@ -575,6 +576,114 @@ function StoryKore:showSettingsDialog()
     if dialog.onShow then dialog:onShow() end
 end
 
+-- Direct TLS socket request to clean Cloudflare Anycast IPs (bypasses regional ISP blocks in Spain)
+function StoryKore:directSocketRequest(req)
+    local ok_sock, socket = pcall(require, "socket")
+    local ok_ssl, ssl = pcall(require, "ssl")
+    if not (ok_sock and ok_ssl and socket and ssl) then
+        return nil, "Direct socket SSL not supported"
+    end
+
+    local url = req.url or ""
+    local host = url:match("^https?://([^/:]+)") or "storykore.app"
+    local path = url:match("^https?://[^/]+(/?.*)$") or "/"
+    if path == "" then path = "/" end
+
+    local method = req.method or "GET"
+    local req_body = req.body or ""
+    local headers = req.headers or {}
+
+    for _, ip in ipairs(CLEAN_CLOUDFLARE_IPS) do
+        local tcp = socket.tcp()
+        if tcp then
+            tcp:settimeout(10)
+            local conn_ok = tcp:connect(ip, 443)
+            if conn_ok then
+                local ssl_params = {
+                    mode = "client",
+                    protocol = "any",
+                    verify = "none",
+                    options = "all",
+                    server_name = host,
+                }
+                local sconn, _ = ssl.wrap(tcp, ssl_params)
+                if sconn then
+                    sconn:settimeout(15)
+                    local hs_ok = sconn:dohandshake()
+                    if hs_ok then
+                        local req_str = method .. " " .. path .. " HTTP/1.1\r\n" ..
+                                        "Host: " .. host .. "\r\n" ..
+                                        "Connection: close\r\n" ..
+                                        "User-Agent: StoryKore-KOReader/" .. PLUGIN_VERSION .. "\r\n"
+                        for k, v in pairs(headers) do
+                            local kl = k:lower()
+                            if kl ~= "host" and kl ~= "connection" and kl ~= "content-length" then
+                                req_str = req_str .. k .. ": " .. tostring(v) .. "\r\n"
+                            end
+                        end
+                        if #req_body > 0 then
+                            req_str = req_str .. "Content-Length: " .. tostring(#req_body) .. "\r\n"
+                        end
+                        req_str = req_str .. "\r\n" .. req_body
+
+                        sconn:send(req_str)
+
+                        local chunks = {}
+                        while true do
+                            local chunk, r_err, partial = sconn:receive(4096)
+                            if chunk then
+                                table.insert(chunks, chunk)
+                            elseif partial and #partial > 0 then
+                                table.insert(chunks, partial)
+                            end
+                            if r_err == "closed" or r_err then break end
+                        end
+                        sconn:close()
+
+                        local raw = table.concat(chunks)
+                        local sep = raw:find("\r\n\r\n", 1, true)
+                        if sep then
+                            local head = raw:sub(1, sep - 1)
+                            local b = raw:sub(sep + 4)
+                            local status = tonumber(head:match("HTTP/%d%.%d%s+(%d+)")) or 200
+
+                            -- De-chunk if transfer-encoding: chunked
+                            if head:lower():find("transfer%-encoding:%s*chunked") then
+                                local decoded = {}
+                                local pos = 1
+                                while pos <= #b do
+                                    local nl = b:find("\r\n", pos, true)
+                                    if not nl then break end
+                                    local hex = b:sub(pos, nl - 1):match("^%s*([0-9a-fA-F]+)")
+                                    local len = tonumber(hex, 16)
+                                    if not len or len == 0 then break end
+                                    table.insert(decoded, b:sub(nl + 2, nl + 1 + len))
+                                    pos = nl + 4 + len
+                                end
+                                b = table.concat(decoded)
+                            end
+
+                            -- Check that response is NOT an HTML ISP block page
+                            local is_html = b:find("^%s*<html") or b:find("^%s*<!DOCTYPE") or b:find("bloqueado") or b:find("LaLiga")
+                            if not is_html then
+                                return status, b
+                            end
+                        end
+                    else
+                        sconn:close()
+                    end
+                else
+                    tcp:close()
+                end
+            else
+                tcp:close()
+            end
+        end
+    end
+
+    return nil, "Clean Cloudflare IPs fallback failed"
+end
+
 -- Network request with lazy loading of network modules
 function StoryKore:httpRequest(req)
     local ok_http, http = pcall(require, "socket.http")
@@ -614,6 +723,28 @@ function StoryKore:httpRequest(req)
         pcall(function() socketutil:reset_timeout() end)
     end
 
+    local status_code = tonumber(code) or code
+    local body_str = table.concat(response_body)
+
+    -- Check if connection was intercepted by an ISP block page (HTML returned with 200 OK)
+    local is_intercepted = false
+    if status_code == 200 and body_str and #body_str > 0 then
+        if body_str:find("<html") or body_str:find("<!DOCTYPE") or body_str:find("bloqueado") or body_str:find("LaLiga") or body_str:find("Juzgado") then
+            is_intercepted = true
+        end
+    end
+
+    -- Automatic transparent fallback to clean Cloudflare Anycast IPs
+    if (not ok) or (res ~= 1) or is_intercepted then
+        local target_url = req.url or ""
+        if target_url:find("storykore%.app") or target_url:find("storykore%.pages%.dev") then
+            local f_code, f_body = self:directSocketRequest(req)
+            if f_code and f_body then
+                return f_code, f_body, {}
+            end
+        end
+    end
+
     if not ok then
         return nil, "Failed to connect: " .. tostring(res)
     end
@@ -625,8 +756,6 @@ function StoryKore:httpRequest(req)
         return nil, "Connection error: " .. tostring(code or res or "unknown")
     end
 
-    local status_code = tonumber(code) or code
-    local body_str = table.concat(response_body)
     return status_code, body_str, resp_headers
 end
 
@@ -1390,7 +1519,11 @@ function StoryKore:doSync(force_full)
 
             return data
         else
-            return nil, _("The server responded with success but data format was unexpected.")
+            if body and (body:find("<html") or body:find("<!DOCTYPE") or body:find("bloqueado") or body:find("LaLiga") or body:find("Juzgado")) then
+                return nil, _("Internet connection was intercepted by your provider (weekend football block in Spain or captive Wi-Fi portal). Your username and password are correct.")
+            else
+                return nil, _("The server responded with success but data format was unexpected.")
+            end
         end
     else
         local data = json_decode(body)
@@ -1475,9 +1608,12 @@ function StoryKore:onSyncTap(force_full)
                 )
                 show_message(msg, 10)
             else
-                if ConfirmBox then
+                local is_auth_err = err_msg and (err_msg:find("expired") or err_msg:find("credentials") or err_msg:find("password") or err_msg:find("401") or err_msg:find("Unauthorized"))
+                local help_text = is_auth_err and _("\n\nWould you like to review your username and password?") or ""
+
+                if ConfirmBox and is_auth_err then
                     UIManager:show(ConfirmBox:new{
-                        text = _("Error syncing with StoryKore:\n\n") .. (err_msg or _("Unknown error")) .. wifi_status_text .. _("\n\nWould you like to review your username and password?"),
+                        text = _("Error syncing with StoryKore:\n\n") .. (err_msg or _("Unknown error")) .. wifi_status_text .. help_text,
                         ok_text = _("Review"),
                         cancel_text = _("Close"),
                         ok_callback = function()
@@ -1485,7 +1621,7 @@ function StoryKore:onSyncTap(force_full)
                         end,
                     })
                 else
-                    show_message(_("Sync error:\n") .. (err_msg or "") .. wifi_status_text, 8)
+                    show_message(_("Error syncing with StoryKore:\n\n") .. (err_msg or "") .. wifi_status_text, 10)
                 end
             end
         end)
