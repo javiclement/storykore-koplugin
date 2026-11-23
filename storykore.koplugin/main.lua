@@ -191,9 +191,8 @@ local function read_text_file(filepath)
 end
 
 local DEFAULT_SERVER_URL = "https://storykore.app"
-local PLUGIN_VERSION = "1.6.5"
-local AUTO_SYNC_COOLDOWN_SECONDS = 300 -- 5 minutes interval between silent auto-syncs
-local NETWORK_DEBOUNCE_SECONDS = 30 -- 30 seconds debounce when Wi-Fi connects
+local PLUGIN_VERSION = "1.6.6"
+local AUTO_SYNC_COOLDOWN_SECONDS = 86400 -- 24 hours interval (at most once a day)
 local GITHUB_API_LATEST = "https://api.github.com/repos/javiclement/storykore-koplugin/releases/latest"
 local GITHUB_RAW_MAIN = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/main.lua"
 local GITHUB_RAW_META = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/_meta.lua"
@@ -250,7 +249,7 @@ function StoryKore:loadSettings()
         self.settings.auto_manage_wifi = true
     end
     if self.settings.background_auto_sync == nil then
-        self.settings.background_auto_sync = true
+        self.settings.background_auto_sync = false
     end
     self.settings.last_auto_sync_timestamp = self.settings.last_auto_sync_timestamp or 0
 
@@ -365,21 +364,21 @@ function StoryKore:addToMainMenu(menu_items)
                         end,
                     },
                     {
-                        text = _("Silent Auto-Sync: ") .. ((self.settings.background_auto_sync ~= false) and _("Enabled") or _("Disabled")),
+                        text = _("Silent Auto-Sync: ") .. ((self.settings.background_auto_sync == true) and _("Enabled (Max 1x/day)") or _("Disabled")),
                         checked_func = function()
-                            return self.settings.background_auto_sync ~= false
+                            return self.settings.background_auto_sync == true
                         end,
-                        help_text = _("Silently syncs in the background when Wi-Fi connects, or when opening/closing books (with anti-spam protection)."),
+                        help_text = _("Silently syncs in the background at most once every 24 hours when Wi-Fi is active."),
                         callback = function(touchmenu_instance)
-                            self.settings.background_auto_sync = not (self.settings.background_auto_sync ~= false)
+                            self.settings.background_auto_sync = not (self.settings.background_auto_sync == true)
                             self:saveSettings()
                             if touchmenu_instance and touchmenu_instance.updateItems then
                                 touchmenu_instance:updateItems()
                             end
                             if self.settings.background_auto_sync then
-                                show_message(_("✓ Silent auto-sync enabled:\n\nSyncs invisibly in the background when Wi-Fi connects or when opening/closing books."), 5)
+                                show_message(_("✓ Silent auto-sync enabled:\n\nSyncs at most once every 24 hours when Wi-Fi is active."), 5)
                             else
-                                show_message(_("Silent auto-sync disabled."), 3)
+                                show_message(_("Silent auto-sync disabled.\n\nRecommended: Use "⚡ Sync reading stats" when you wish to sync."), 4)
                             end
                         end,
                     },
@@ -1522,7 +1521,7 @@ function StoryKore:showStatusDialog()
         (self.settings.server_url and self.settings.server_url ~= "") and self.settings.server_url or DEFAULT_SERVER_URL,
         self.settings.username ~= "" and self.settings.username or _("(Not configured)"),
         self.settings.auto_manage_wifi and _("Enabled (Connect -> Sync -> Disconnect)") or _("Disabled (Manual)"),
-        (self.settings.background_auto_sync ~= false) and _("Enabled (Passive Wi-Fi, 5m cooldown)") or _("Disabled"),
+        (self.settings.background_auto_sync == true) and _("Enabled (Passive Wi-Fi, 24h cooldown)") or _("Disabled"),
         has_stats and _("Detected (statistics.sqlite3)") or _("Not found"),
         sess_count,
         lua_count,
@@ -1532,10 +1531,10 @@ function StoryKore:showStatusDialog()
     show_message(text, 10)
 end
 
--- Invisible background auto-sync when Wi-Fi is detected
+-- Invisible background auto-sync when Wi-Fi is detected (at most once every 24 hours)
 function StoryKore:triggerBackgroundAutoSync(reason)
-    -- Guard 1: Is feature enabled?
-    if self.settings.background_auto_sync == false then
+    -- Guard 1: Is feature enabled? (Default is false/disabled to preserve battery)
+    if self.settings.background_auto_sync ~= true then
         return
     end
 
@@ -1556,16 +1555,11 @@ function StoryKore:triggerBackgroundAutoSync(reason)
         return
     end
 
-    -- Guard 5: Cooldown anti-spam protection
-    -- If network just connected, use short 30s debounce; otherwise 5 minutes cooldown
-    local cooldown = (reason == "network_connected") and NETWORK_DEBOUNCE_SECONDS or AUTO_SYNC_COOLDOWN_SECONDS
+    -- Guard 5: Cooldown anti-spam protection (at most once every 24 hours)
+    local cooldown = AUTO_SYNC_COOLDOWN_SECONDS
     local now = os.time()
     local last_activity = math.max(self.settings.last_sync_timestamp or 0, self.settings.last_auto_sync_timestamp or 0)
     if (now - last_activity) < cooldown then
-        if logger and logger.dbg then
-            logger.dbg(string.format("StoryKore: Silent background auto-sync skipped (cooldown active: %ds remaining, trigger: %s)",
-                cooldown - (now - last_activity), tostring(reason)))
-        end
         return
     end
 
@@ -1575,9 +1569,8 @@ function StoryKore:triggerBackgroundAutoSync(reason)
         logger.info("StoryKore: Starting silent background auto-sync (trigger: " .. tostring(reason) .. ")")
     end
 
-    -- Execute asynchronously via UIManager:scheduleIn to avoid blocking reader UI or book loading
-    -- On network connection or resume, wait 3.5s for DNS and socket routing to stabilize
-    local delay = (reason == "network_connected" or reason == "resume") and 3.5 or 2.0
+    -- Execute asynchronously via UIManager:scheduleIn to avoid blocking reader UI
+    local delay = 5.0
     local schedule_fn = (UIManager and UIManager.scheduleIn) or function(_, d, cb) cb() end
     schedule_fn(UIManager, delay, function()
         -- Re-verify Wi-Fi is still on before performing network sync
@@ -1585,13 +1578,6 @@ function StoryKore:triggerBackgroundAutoSync(reason)
             self._is_syncing = false
             return
         end
-
-        -- Flush active document settings to disk so current page/reading progress is saved in .lua sidecar
-        pcall(function()
-            if self.ui and self.ui.doc_settings and self.ui.doc_settings.flush then
-                self.ui.doc_settings:flush()
-            end
-        end)
 
         local ok, result, err_msg = pcall(function()
             return self:doSync(false) -- incremental sync
@@ -1614,13 +1600,8 @@ function StoryKore:triggerBackgroundAutoSync(reason)
 end
 
 -- KOReader Lifecycle Hooks
-function StoryKore:onReaderReady()
-    self:triggerBackgroundAutoSync("open_book")
-end
-
-function StoryKore:onCloseDocument()
-    self:triggerBackgroundAutoSync("close_book")
-end
+-- Note: onReaderReady (open_book) and onCloseDocument (close_book) are disabled
+-- to prevent battery drain and spamming requests every time books are opened/closed.
 
 function StoryKore:onNetworkConnected()
     self:triggerBackgroundAutoSync("network_connected")
