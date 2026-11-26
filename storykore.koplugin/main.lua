@@ -191,7 +191,7 @@ local function read_text_file(filepath)
 end
 
 local DEFAULT_SERVER_URL = "https://storykore.app"
-local PLUGIN_VERSION = "1.6.6"
+local PLUGIN_VERSION = "1.6.7"
 local AUTO_SYNC_COOLDOWN_SECONDS = 86400 -- 24 hours interval (at most once a day)
 local GITHUB_API_LATEST = "https://api.github.com/repos/javiclement/storykore-koplugin/releases/latest"
 local GITHUB_RAW_MAIN = "https://raw.githubusercontent.com/javiclement/storykore-koplugin/main/storykore.koplugin/main.lua"
@@ -378,7 +378,7 @@ function StoryKore:addToMainMenu(menu_items)
                             if self.settings.background_auto_sync then
                                 show_message(_("✓ Silent auto-sync enabled:\n\nSyncs at most once every 24 hours when Wi-Fi is active."), 5)
                             else
-                                show_message(_("Silent auto-sync disabled.\n\nRecommended: Use "⚡ Sync reading stats" when you wish to sync."), 4)
+                                show_message(_("Silent auto-sync disabled.\n\nRecommended: Use '⚡ Sync reading stats' when you wish to sync."), 4)
                             end
                         end,
                     },
